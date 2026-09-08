@@ -65,6 +65,7 @@ from nav2_msgs.action import FollowPath
 from amiga_interfaces.action import MoveTo
 from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners.bezier import sample_bezier_chain
+from amiga_ros2_planners.pose import PoseProvider
 
 # e.g. "battery_below(20)" -> ("battery_below", "20"). Matches the
 # semicolon-separated syntax schema.yaml's own MoveTo.triggers port
@@ -90,10 +91,26 @@ class MoveToNode(Node):
         super().__init__("move_to_node")
 
         self.declare_parameter("reference_frame", "map")
+        self.declare_parameter("odom_frame", "odom")
+        self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("samples_per_segment", 10)
         self.declare_parameter("trigger_poll_period_s", 0.5)
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter("controller_id", "")
+
+        # local_costmap (which controller_server's FollowPath needs a
+        # working state estimate to run against) looks up base_link->odom,
+        # published by Gazebo's diff_drive_controller -- a plugin that can
+        # load several seconds after this node starts. Used to gate
+        # sending a FollowPath goal below: without it, controller_server
+        # has no real robot state, and observed behavior is NOT "wait/
+        # fail" but a false-positive instant "Reached the goal!" with the
+        # robot never actually moving.
+        self._odom_pose = PoseProvider(
+            self,
+            self.get_parameter("odom_frame").value,
+            self.get_parameter("base_frame").value,
+        )
 
         # Both the FollowPath client and the condition-evaluation calls
         # need to complete WHILE this action's own execute callback is
@@ -184,6 +201,17 @@ class MoveToNode(Node):
             self.get_logger().error(
                 f"FollowPath action server "
                 f"'{self.get_parameter('follow_path_action').value}' unavailable")
+            goal_handle.abort()
+            result.reason, result.status = "aborted", False
+            return result
+
+        # See this node's own constructor comment on why -- without a real
+        # base_link->odom transform yet, controller_server has no state to
+        # run FollowPath against and reports a false-positive instant
+        # "Reached the goal!" rather than actually driving anywhere.
+        if not self._odom_pose.wait_ready():
+            self.get_logger().error(
+                "move_to_node: no odom pose after startup timeout, aborting")
             goal_handle.abort()
             result.reason, result.status = "aborted", False
             return result

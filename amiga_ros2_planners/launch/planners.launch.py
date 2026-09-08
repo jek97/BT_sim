@@ -38,6 +38,12 @@ def generate_launch_description():
             "treat every tree as."),
         DeclareLaunchArgument("reference_frame", default_value="map"),
         DeclareLaunchArgument("base_frame", default_value="base_link"),
+        DeclareLaunchArgument(
+            "odom_frame", default_value="odom",
+            description="move_to_node's own pre-flight check: the frame "
+            "local_costmap needs a base_frame transform into before "
+            "controller_server's FollowPath has any real robot state to "
+            "run against (see move_to_node.py's own constructor comment)."),
         DeclareLaunchArgument("battery_topic", default_value="battery_state"),
         DeclareLaunchArgument("odom_topic", default_value="odometry/filtered/local"),
         DeclareLaunchArgument("map_topic", default_value="orchard/occupancy_grid"),
@@ -151,6 +157,8 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "reference_frame": LaunchConfiguration("reference_frame"),
+                "odom_frame": LaunchConfiguration("odom_frame"),
+                "base_frame": LaunchConfiguration("base_frame"),
                 "samples_per_segment": LaunchConfiguration("samples_per_segment"),
                 "follow_path_action": LaunchConfiguration("follow_path_action"),
                 "controller_id": LaunchConfiguration("controller_id"),
