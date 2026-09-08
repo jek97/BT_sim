@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""
+condition_service_node.py
+
+Hosts EvaluateCondition (amiga_interfaces/srv/EvaluateCondition) -- the
+ROS2-service form of every problog_project Condition node EXCEPT
+HaltedWith (see that .srv's own header for why HaltedWith is excluded:
+it needs a tree's own blackboard history, which is not this node's, or
+any service's, to have).
+
+problog_project's own bt_actions.py deliberately left these as
+"interface_only": their real semantics there are holds/2 lookups against
+a Prolog situation, which only exists inside a ProbLog inference run.
+This node is the actual, executable counterpart for this simulation --
+each condition below reads the SAME live state plan_service_node.py
+reads (tf2 pose, the orchard's own obstacles) plus a live battery topic,
+rather than a situation history:
+
+  DistanceBelow/Equal/Over   -- tf2 current (x,y) vs. an explicit goal
+                                 point, exactly as schema.yaml describes.
+  ObstacleInBound            -- tf2 current (x,y) vs. the NEAREST
+                                 orchard tree's own boundary clearance
+                                 (geometry.nearest_obstacle) -- a direct
+                                 port of schema.yaml's own semantics.
+  ObstacleOnPath             -- NOT a full port -- see its own handler
+                                 below for exactly what is and isn't
+                                 implemented yet, and why.
+  BatteryBelow/Equal/Over    -- the latest sensor_msgs/BatteryState
+                                 percentage from battery_sim_node.
+  LineOfSightClear           -- tf2 current (x,y) -> goal segment vs.
+                                 `obstacle_id`'s own tree circle.
+
+Equality checks (DistanceEqual/BatteryEqual) use a small tolerance
+(`equal_tolerance_m`/`equal_tolerance_pct`) rather than exact float
+equality -- schema.yaml itself notes that in a continuous model, exact
+equality is "only true at whatever instant" a value crosses the
+threshold, which a discrete-time service poll will essentially never
+land on exactly.
+"""
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import BatteryState
+
+from amiga_interfaces.srv import EvaluateCondition
+from amiga_ros2_planners.geometry import nearest_obstacle, line_of_sight_clear
+from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
+from amiga_ros2_planners.pose import PoseProvider
+
+
+class ConditionServiceNode(Node):
+    def __init__(self):
+        super().__init__("condition_service_node")
+
+        self.declare_parameter("orchard_topic", "orchard/tree_info_json")
+        self.declare_parameter("datum_lat", 37.3611)
+        self.declare_parameter("datum_lon", -120.4322)
+        self.declare_parameter("tree_obstacle_radius", 0.5)
+        self.declare_parameter("reference_frame", "map")
+        self.declare_parameter("base_frame", "base_link")
+        self.declare_parameter("battery_topic", "battery_state")
+        self.declare_parameter("equal_tolerance_m", 0.1)
+        self.declare_parameter("equal_tolerance_pct", 1.0)
+
+        self._obstacles = OrchardObstacleStore(
+            self,
+            self.get_parameter("orchard_topic").value,
+            self.get_parameter("datum_lat").value,
+            self.get_parameter("datum_lon").value,
+            self.get_parameter("tree_obstacle_radius").value,
+        )
+        self._pose = PoseProvider(
+            self,
+            self.get_parameter("reference_frame").value,
+            self.get_parameter("base_frame").value,
+        )
+        self._battery_percent = None
+        self.create_subscription(
+            BatteryState, self.get_parameter("battery_topic").value,
+            self._on_battery, 10)
+
+        self._handlers = {
+            "DistanceBelow": self._distance_below,
+            "DistanceEqual": self._distance_equal,
+            "DistanceOver": self._distance_over,
+            "ObstacleInBound": self._obstacle_in_bound,
+            "ObstacleOnPath": self._obstacle_on_path,
+            "BatteryBelow": self._battery_below,
+            "BatteryEqual": self._battery_equal,
+            "BatteryOver": self._battery_over,
+            "LineOfSightClear": self._line_of_sight_clear,
+        }
+
+        self._srv = self.create_service(
+            EvaluateCondition, "evaluate_condition", self._on_request)
+        self.get_logger().info(
+            "condition_service_node ready on 'evaluate_condition'")
+
+    def _on_battery(self, msg):
+        self._battery_percent = msg.percentage * 100.0
+
+    # -- current pose helper, shared by every position-based condition --
+    def _current_xy_or_none(self, response):
+        xy = self._pose.get_xy()
+        if xy is None:
+            response.result = False
+            response.reason = "no_pose"
+            return None
+        return xy
+
+    # -- Distance* ------------------------------------------------------
+    def _distance_below(self, request, response):
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        d = ((x - request.goal_x) ** 2 + (y - request.goal_y) ** 2) ** 0.5
+        response.result = d < request.threshold
+        return response
+
+    def _distance_equal(self, request, response):
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        d = ((x - request.goal_x) ** 2 + (y - request.goal_y) ** 2) ** 0.5
+        tolerance = self.get_parameter("equal_tolerance_m").value
+        response.result = abs(d - request.threshold) <= tolerance
+        return response
+
+    def _distance_over(self, request, response):
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        d = ((x - request.goal_x) ** 2 + (y - request.goal_y) ** 2) ** 0.5
+        response.result = d > request.threshold
+        return response
+
+    # -- Obstacle* --------------------------------------------------------
+    def _obstacle_in_bound(self, request, response):
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        obstacles = self._obstacles.get_obstacles()
+        _obstacle, clearance = nearest_obstacle(x, y, obstacles)
+        response.result = clearance < request.threshold
+        return response
+
+    def _obstacle_on_path(self, request, response):
+        """PARTIAL PORT -- see this package's README "Known limitations".
+
+        schema.yaml's own ObstacleOnPath is a check against the CURRENT
+        WALK's full future trajectory (does it ever enter an obstacle,
+        not just come near one) -- this service has no notion of an
+        in-progress walk to check against, since the MoveTo leg that
+        would produce one isn't implemented in this simulation yet (see
+        the top-level README's own note on MoveTo being deliberately out
+        of scope for this pass). Until that exists, this falls back to
+        the same "is the robot presently on top of an obstacle" check
+        ObstacleInBound-with-a-tight-threshold already gives (clearance
+        < 0, i.e. genuinely inside a canopy) -- correct for "am I in an
+        obstacle right now", not for "will my planned path ever enter
+        one", which is the actually-documented semantics. Revisit once a
+        MoveTo/FollowPath leg can supply its own planned trajectory.
+        """
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        obstacles = self._obstacles.get_obstacles()
+        _obstacle, clearance = nearest_obstacle(x, y, obstacles)
+        response.result = clearance < 0.0
+        response.reason = "partial_port: current-position-only, not full-trajectory"
+        return response
+
+    # -- Battery* ---------------------------------------------------------
+    def _battery_or_none(self, response):
+        if self._battery_percent is None:
+            response.result = False
+            response.reason = "no_battery_reading"
+            return None
+        return self._battery_percent
+
+    def _battery_below(self, request, response):
+        percent = self._battery_or_none(response)
+        if percent is None:
+            return response
+        response.result = percent < request.threshold
+        return response
+
+    def _battery_equal(self, request, response):
+        percent = self._battery_or_none(response)
+        if percent is None:
+            return response
+        tolerance = self.get_parameter("equal_tolerance_pct").value
+        response.result = abs(percent - request.threshold) <= tolerance
+        return response
+
+    def _battery_over(self, request, response):
+        percent = self._battery_or_none(response)
+        if percent is None:
+            return response
+        response.result = percent > request.threshold
+        return response
+
+    # -- LineOfSightClear ---------------------------------------------------
+    def _line_of_sight_clear(self, request, response):
+        xy = self._current_xy_or_none(response)
+        if xy is None:
+            return response
+        x, y = xy
+        obstacle = self._obstacles.get_obstacle(request.obstacle_id)
+        if obstacle is None:
+            response.result = False
+            response.reason = "no_such_obstacle"
+            return response
+        response.result = line_of_sight_clear(
+            x, y, request.goal_x, request.goal_y, obstacle)
+        return response
+
+    def _on_request(self, request, response):
+        response.result = False
+        response.reason = ""
+        handler = self._handlers.get(request.condition)
+        if handler is None:
+            response.reason = f"unknown_condition({request.condition})"
+            return response
+        return handler(request, response)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ConditionServiceNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

@@ -3,6 +3,7 @@ project(amiga_interfaces)
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/LoRaFrame.msg
@@ -11,6 +12,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/InterpretAnomaly.srv
   srv/InterpretNote.srv
   srv/VerifyReplan.srv
+  srv/PlanPath.srv
+  srv/EvaluateCondition.srv
+  DEPENDENCIES geometry_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

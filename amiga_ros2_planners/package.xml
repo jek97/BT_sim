@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amiga_ros2_planners</name>
+  <version>0.0.0</version>
+  <description>
+    Path planning and BT-condition backends ported from the problog_project
+    research repo (astar/straight/voronoi/follow_boarder planners, plus the
+    schema.yaml condition set) onto this simulation's own orchard/tf2 state,
+    exposed as ROS2 services for a future BT.cpp PlanWith/condition leaf to
+    call. See this package's own README.md for exactly what was ported vs.
+    newly written.
+  </description>
+  <maintainer email="appuser@todo.todo">appuser</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>amiga_interfaces</depend>
+  <depend>python3-numpy</depend>
+  <depend>python3-scipy</depend>
+
+  <!-- Reads the same tree-info JSON topic orchard_management_node caches
+       (see amiga_ros2_behavior_tree/src/orchard_management.cpp) -- runtime
+       coupling, not a build dependency on that package's own code. -->
+  <exec_depend>amiga_ros2_behavior_tree</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

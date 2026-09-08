@@ -1,0 +1,54 @@
+# PlanPath.srv
+#
+# One consolidated planning service covering every algorithm the
+# problog_project's PlanWith BT node exposes (astar/straight/voronoi/
+# follow_boarder) -- same "one node, one algorithm port" consolidation
+# problog_project/module/contracts/schema.yaml documents for its own
+# PlanWith action, kept here rather than split into four services.
+#
+# Server: amiga_ros2_planners' plan_service_node. Instantaneous -- does
+# not move the robot, only computes a path from the robot's CURRENT pose
+# (read from tf2 by the server itself, not passed in the request -- see
+# plan_service_node.py's own note on why) to an explicit goal.
+#
+# Obstacles are this robot's own orchard, not a static map file: the
+# server subscribes to the same tree-info JSON topic
+# orchard_management_node already caches (see amiga_ros2_planners'
+# README), and treats each tree as a circular obstacle.
+
+# One of: "astar", "straight", "voronoi", "follow_boarder" -- selects
+# which fields below are actually used, same convention as
+# problog_project's own PlanWith.algorithm port.
+string algorithm
+
+# Target position, world/map frame metres -- REQUIRED for astar/
+# straight/voronoi, IGNORED for follow_boarder (which has no goal of
+# its own; see follow_boarder's note in planning_core.py).
+float64 goal_x
+float64 goal_y
+
+# Which tree to circle -- REQUIRED for follow_boarder, IGNORED
+# otherwise. Matches orchard_obstacles.py's own obstacle id convention,
+# "tree_<tree_index>".
+string obstacle_id
+
+# Distance to maintain from the tree canopy's own boundary while
+# circling it, metres -- REQUIRED for follow_boarder, IGNORED
+# otherwise.
+float64 offset
+
+---
+# Response
+
+# The planned path, as a chained-cubic-Bezier control point list
+# (length 3k+1) in the SAME frame the server read the robot's current
+# pose in -- empty if status is false.
+geometry_msgs/Point[] control_points
+
+# "completed" or "no_path" (astar/voronoi -- no route exists), "no_obstacle"
+# (follow_boarder -- obstacle_id names no known tree), or "no_pose" (the
+# server couldn't resolve the robot's own current position via tf2).
+string reason
+
+# true iff reason is "completed".
+bool status
