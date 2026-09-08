@@ -1,6 +1,7 @@
 #include <behaviortree_cpp/bt_factory.h>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <rclcpp/rclcpp.hpp>
@@ -92,12 +93,39 @@ int main(int argc, char **argv) {
   // (plan_service_node.py/move_to_node.py/condition_service_node.py) --
   // otherwise RosServiceNode/RosActionNode has no client to dial and
   // throws at tick time.
+  // plan_service_node.py/condition_service_node.py deliberately delay
+  // advertising plan_path/evaluate_condition until they have a real tf2
+  // pose (and, for evaluate_condition, a first battery reading) -- see
+  // their own PoseProvider.wait_ready() comments -- which can take
+  // several seconds past this node's own startup while Gazebo/Nav2 are
+  // still coming up. RosNodeParams' own default timeouts (the
+  // service/action-existence check done once at tree-construction
+  // time, wait_for_server_timeout, and the per-call response wait,
+  // server_timeout) are far shorter than that, so createTreeFromText
+  // would otherwise log "Service ... is not reachable" and hand back a
+  // never-connected client -- the first real tick then hits onFailure
+  // and fails BatteryOver/PlanWith outright on a startup race, not a
+  // real condition/plan answer, which can steer an entire plain
+  // Fallback down the wrong branch before its backend ever got a
+  // chance to answer for real. Give these three the same generous
+  // budget the Python side already waits up to (set both timeout
+  // fields since it's the existence check, wait_for_server_timeout,
+  // that this specific error comes from, but a slow first response
+  // right after startup is plausible too).
+  auto backend_timeout = std::chrono::milliseconds(30000);
+
   RosNodeParams plan_params = ros_params;
   plan_params.default_port_value = "plan_path";
+  plan_params.wait_for_server_timeout = backend_timeout;
+  plan_params.server_timeout = backend_timeout;
   RosNodeParams move_to_params = ros_params;
   move_to_params.default_port_value = "move_to";
+  move_to_params.wait_for_server_timeout = backend_timeout;
+  move_to_params.server_timeout = backend_timeout;
   RosNodeParams condition_params = ros_params;
   condition_params.default_port_value = "evaluate_condition";
+  condition_params.wait_for_server_timeout = backend_timeout;
+  condition_params.server_timeout = backend_timeout;
 
   factory.registerNodeType<PlanWith>("PlanWith", plan_params);
   factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
