@@ -51,6 +51,7 @@ relying on it.
 """
 import math
 import re
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -193,16 +194,35 @@ class MoveToNode(Node):
         if controller_id:
             follow_goal.controller_id = controller_id
 
-        send_future = self._follow_path_client.send_goal_async(
-            follow_goal,
-            feedback_callback=lambda fb: self._on_follow_path_feedback(fb, goal_handle))
-        rclpy.spin_until_future_complete(self, send_future)
-        follow_path_goal_handle = send_future.result()
-        if follow_path_goal_handle is None or not follow_path_goal_handle.accepted:
-            self.get_logger().error("FollowPath goal rejected")
-            goal_handle.abort()
-            result.reason, result.status = "aborted", False
-            return result
+        # wait_for_server only confirms the action is visible on the ROS
+        # graph, which for a Nav2 lifecycle node (controller_server) can be
+        # true well before it's actually ACTIVE -- the mission starts
+        # ticking as soon as it's delivered, independent of Nav2's own
+        # lifecycle bring-up sequence (see run_problog_problem.launch.py's
+        # own docstring), so the very first goal here can land in that gap
+        # and get rejected outright by an inactive controller_server. Retry
+        # for a while rather than aborting on the first rejection -- once
+        # lifecycle_manager finishes activating controller_server (a
+        # one-time startup event), goals go through normally.
+        follow_path_goal_handle = None
+        deadline = time.monotonic() + 30.0
+        while follow_path_goal_handle is None or not follow_path_goal_handle.accepted:
+            send_future = self._follow_path_client.send_goal_async(
+                follow_goal,
+                feedback_callback=lambda fb: self._on_follow_path_feedback(fb, goal_handle))
+            rclpy.spin_until_future_complete(self, send_future)
+            follow_path_goal_handle = send_future.result()
+            if follow_path_goal_handle is not None and follow_path_goal_handle.accepted:
+                break
+            if time.monotonic() >= deadline:
+                self.get_logger().error("FollowPath goal rejected")
+                goal_handle.abort()
+                result.reason, result.status = "aborted", False
+                return result
+            self.get_logger().warn(
+                "FollowPath goal rejected (controller_server likely not "
+                "active yet), retrying...")
+            time.sleep(0.5)
 
         parsed_triggers = self._parse_triggers(list(goal.triggers))
         get_result_future = follow_path_goal_handle.get_result_async()
