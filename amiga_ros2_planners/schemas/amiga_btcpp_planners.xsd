@@ -51,9 +51,35 @@
             <xs:sequence>
                 <xs:element name="Mission" type="xs:string" minOccurs="1" />
                 <xs:element ref="BehaviorTree" maxOccurs="unbounded" />
+                <!-- Optional trailing TreeNodesModel (standard BT.cpp v4
+                     Groot-editor metadata; problog_project's own trees
+                     include one, this repo's own examples never have).
+                     Contents deliberately unvalidated (xs:any, skip),
+                     since it's tooling metadata bt_runner itself never
+                     reads, not something worth a strict schema for. -->
+                <xs:element ref="TreeNodesModel" minOccurs="0" />
             </xs:sequence>
             <xs:attribute name="BTCPP_format" type="xs:integer" use="required" />
             <xs:attribute name="schema_location" type="xs:string" use="required" />
+            <!-- Accepted (not required) so a problog_project tree's own root
+                 tag, vanilla BT.cpp's own <root BTCPP_format="4"
+                 main_tree_to_execute="MainTree"> convention (see
+                 scripts/adapt_problog_tree.py), needs no attribute
+                 STRIPPED, only Mission/schema_location ADDED, to validate
+                 here. Genuinely unused by bt_runner with a single
+                 <BehaviorTree> (BT.cpp auto-selects the sole tree), so
+                 accepting it is harmless for this repo's own trees too. -->
+            <xs:attribute name="main_tree_to_execute" type="xs:string" use="optional" />
+        </xs:complexType>
+    </xs:element>
+
+    <!-- Groot-editor metadata, unvalidated, per the root element's own
+         comment above. -->
+    <xs:element name="TreeNodesModel">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded" />
+            </xs:sequence>
         </xs:complexType>
     </xs:element>
 
@@ -124,6 +150,29 @@
         </xs:choice>
     </xs:group>
 
+    <!-- Inverter: BT.cpp's own built-in single-child decorator, wraps
+         ANY one leaf/control node and flips its result. Not part of the
+         base schema at all (only used to negate a Condition inline,
+         which the base schema's own action-only trees never needed);
+         problog_project's own trees rely on it directly (e.g.
+         <Inverter><ObstacleOnPath/></Inverter> as a Sequence's own
+         first child, not just trailing a Fallback), see schema.yaml's
+         own note on why Inverter, not a dedicated negated-condition
+         leaf, is this project's own negation idiom. A separate element
+         from DecoratorGroup above (which only ever appears trailing a
+         Fallback) since Inverter can appear anywhere an
+         action/condition/control node can. -->
+    <xs:element name="Inverter" type="InverterType" />
+    <xs:complexType name="InverterType">
+        <xs:choice minOccurs="1" maxOccurs="1">
+            <xs:group ref="ActionGroup" />
+            <xs:group ref="ConditionGroup" />
+            <xs:group ref="ControlFlowGroup" />
+            <xs:element ref="Inverter" />
+        </xs:choice>
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
     <xs:attributeGroup name="taskIdentity">
         <xs:attribute name="name" type="taskNameType" use="optional" />
     </xs:attributeGroup>
@@ -135,6 +184,7 @@
                 <xs:group ref="ActionGroup" />
                 <xs:group ref="ConditionGroup" />
                 <xs:group ref="ControlFlowGroup" />
+                <xs:element ref="Inverter" />
             </xs:choice>
         </xs:sequence>
         <xs:attributeGroup ref="taskIdentity" />
@@ -152,10 +202,21 @@
         <xs:attributeGroup ref="taskIdentity" />
     </xs:complexType>
 
-    <!-- FallbackType: sequence then decorators -->
+    <!-- FallbackType: any action/condition/control-flow/Inverter child
+         (broadened from the base schema's own Sequence-only choice,
+         problog_project's own problem4 tree puts a bare
+         ReactiveSequence directly under a Fallback, which real BT.cpp
+         always allowed; every tree that only ever used Sequence
+         children there, this repo's own included, remains valid), then
+         decorators. -->
     <xs:complexType name="FallbackType">
         <xs:sequence>
-            <xs:element ref="Sequence" minOccurs="1" maxOccurs="unbounded"/>
+            <xs:choice minOccurs="1" maxOccurs="unbounded">
+                <xs:group ref="ActionGroup" />
+                <xs:group ref="ConditionGroup" />
+                <xs:group ref="ControlFlowGroup" />
+                <xs:element ref="Inverter" />
+            </xs:choice>
             <xs:group ref="DecoratorGroup" minOccurs="0"/>
         </xs:sequence>
         <xs:attributeGroup ref="taskIdentity" />
@@ -285,14 +346,17 @@
     </xs:complexType>
 
     <!-- MoveTo — follows control_points (typically PlanWith's own
-         output, via the shared blackboard-key convention). NOTE: this
-         package does not yet implement a MoveTo backend/BT leaf (see
-         its own README's "Known limitations" — MoveTo was explicitly
-         out of scope for this pass); this entry exists so a
-         problog_project tree validates and PARSES end-to-end even
-         though ticking a MoveTo node will fail until that leaf exists. -->
+         output, via the shared blackboard-key convention). action_name
+         is fixed, naming amiga_ros2_planners' move_to_node's own MoveTo
+         action for a future BT::RosActionNode leaf to dial (that leaf
+         itself does not exist yet in amiga_ros2_behavior_tree — see this
+         package's own README's "Known limitations"; move_to_node is a
+         working ROS2 action backend, callable today via
+         `ros2 action send_goal`, just not yet wired into a BT.cpp tree). -->
     <xs:complexType name="moveToType">
         <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="move_to" />
         <xs:attribute name="control_points" type="portValueType" use="required" />
         <!-- semicolon-separated trigger list, e.g.
              "obstacle_in_bound(0.6);battery_below(20)" -->

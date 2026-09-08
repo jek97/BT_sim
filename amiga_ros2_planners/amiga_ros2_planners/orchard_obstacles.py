@@ -51,7 +51,23 @@ class OrchardObstacleStore:
         except (json.JSONDecodeError, TypeError) as exc:
             self._node.get_logger().warn(f"orchard JSON parse failed: {exc}")
             return
-        trees = data.get("trees", []) if isinstance(data, dict) else []
+        # Two payload shapes exist in this repo: the "new" wrapped object
+        # {"trees": [...], "aisle_entrances": [...], ...}
+        # orchard_management.cpp's own handle_request expects, and a
+        # bare [...] array of tree records -- the shape every checked-in
+        # amiga_ros2_behavior_tree/examples/*.bin fixture actually
+        # carries (verified directly against mv_10_60_sample.bin's own
+        # second frame). orchard_management.cpp itself only accepts the
+        # wrapped form (data.is_object() check), so those fixtures would
+        # come back empty through THAT node's own /orchard/get_tree_info
+        # service -- accepting both here means this module still gets a
+        # real obstacle list from them regardless of that mismatch.
+        if isinstance(data, dict):
+            trees = data.get("trees", [])
+        elif isinstance(data, list):
+            trees = data
+        else:
+            trees = []
         self._trees = [t for t in trees if "lat" in t and "lon" in t]
 
     def get_obstacles(self):

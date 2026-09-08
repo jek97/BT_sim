@@ -33,6 +33,7 @@ setup(
             "condition_service = amiga_ros2_planners.condition_service_node:main",
             "battery_sim = amiga_ros2_planners.battery_sim_node:main",
             "orchard_map = amiga_ros2_planners.orchard_map_node:main",
+            "move_to = amiga_ros2_planners.move_to_node:main",
         ],
     },
 )

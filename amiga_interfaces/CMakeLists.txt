@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/VerifyReplan.srv
   srv/PlanPath.srv
   srv/EvaluateCondition.srv
+  action/MoveTo.action
   DEPENDENCIES geometry_msgs
 )
 

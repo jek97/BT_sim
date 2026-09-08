@@ -250,6 +250,44 @@ def build_occupancy_grid(obstacles, sx, sy, gx, gy,
     return grid
 
 
+def build_grid_map(obstacles, resolution, margin, inflate=PLANNING_INFLATE_M):
+    """Rasterize ONE OccupancyGridMap covering every obstacle's own
+    extent plus `margin` -- the whole-orchard analogue of
+    build_occupancy_grid above, sized once from every known obstacle
+    rather than per (start, goal) query. Used by orchard_map.py (ROS) and
+    by scripts/export_orchard_map.py (deliberately ROS-free, so it can
+    run standalone against a checked-in orchard JSON fixture with no
+    ROS2 environment at all -- see that script's own header) alike;
+    kept here rather than in orchard_map.py so neither caller needs to
+    import anything ROS-specific just to rasterize a grid. Returns a 1x1
+    empty grid at the origin if `obstacles` is empty, so a caller always
+    gets something usable."""
+    if not obstacles:
+        data = np.zeros((1, 1), dtype=np.int8)
+        return OccupancyGridMap(data, resolution, -margin, -margin)
+
+    min_x = min(o.x - o.radius for o in obstacles) - margin
+    max_x = max(o.x + o.radius for o in obstacles) + margin
+    min_y = min(o.y - o.radius for o in obstacles) - margin
+    max_y = max(o.y + o.radius for o in obstacles) + margin
+
+    width = max(1, int(math.ceil((max_x - min_x) / resolution)))
+    height = max(1, int(math.ceil((max_y - min_y) / resolution)))
+    data = np.zeros((height, width), dtype=np.int8)
+    grid = OccupancyGridMap(data, resolution, min_x, min_y)
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    world_x = min_x + (xx + 0.5) * resolution
+    world_y = min_y + (yy + 0.5) * resolution
+    for obstacle in obstacles:
+        occupied_radius = obstacle.radius + inflate
+        mask = (world_x - obstacle.x) ** 2 + (world_y - obstacle.y) ** 2 \
+            <= occupied_radius ** 2
+        data[mask] = 100
+
+    return grid
+
+
 def astar(grid_map, start_rc, goal_rc, occ_thresh=OCC_THRESH,
           connectivity=CONNECTIVITY):
     """8- or 4-connected A* over grid_map -- unchanged from

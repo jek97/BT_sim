@@ -23,45 +23,14 @@ load-once-at-import-time map.yaml, and, published as a standard
 nav_msgs/OccupancyGrid, something RViz/Foxglove/Nav2's own costmap
 layers can all consume too.
 """
-import math
-
 import numpy as np
 from nav_msgs.msg import MapMetaData, OccupancyGrid
 
-from amiga_ros2_planners.planning_core import OccupancyGridMap, PLANNING_INFLATE_M
-
-
-def build_grid_map(obstacles, resolution, margin, inflate=PLANNING_INFLATE_M):
-    """Rasterize ONE OccupancyGridMap covering every obstacle's own
-    extent plus `margin` -- the whole-orchard analogue of
-    planning_core.py's own (query-scoped) build_occupancy_grid, sized
-    once from every known tree rather than per (start, goal) query.
-    Returns a 1x1 empty grid at the origin if `obstacles` is empty (no
-    orchard published yet), so a caller always gets something usable."""
-    if not obstacles:
-        data = np.zeros((1, 1), dtype=np.int8)
-        return OccupancyGridMap(data, resolution, -margin, -margin)
-
-    min_x = min(o.x - o.radius for o in obstacles) - margin
-    max_x = max(o.x + o.radius for o in obstacles) + margin
-    min_y = min(o.y - o.radius for o in obstacles) - margin
-    max_y = max(o.y + o.radius for o in obstacles) + margin
-
-    width = max(1, int(math.ceil((max_x - min_x) / resolution)))
-    height = max(1, int(math.ceil((max_y - min_y) / resolution)))
-    data = np.zeros((height, width), dtype=np.int8)
-    grid = OccupancyGridMap(data, resolution, min_x, min_y)
-
-    yy, xx = np.mgrid[0:height, 0:width]
-    world_x = min_x + (xx + 0.5) * resolution
-    world_y = min_y + (yy + 0.5) * resolution
-    for obstacle in obstacles:
-        occupied_radius = obstacle.radius + inflate
-        mask = (world_x - obstacle.x) ** 2 + (world_y - obstacle.y) ** 2 \
-            <= occupied_radius ** 2
-        data[mask] = 100
-
-    return grid
+# Re-exported for backwards compatibility with anything importing
+# build_grid_map from here -- the actual implementation moved to
+# planning_core.py so it has no ROS import and scripts/export_orchard_map.py
+# can call it standalone (see that function's own docstring for why).
+from amiga_ros2_planners.planning_core import build_grid_map, OccupancyGridMap  # noqa: F401
 
 
 def grid_to_occupancy_grid_msg(grid, frame_id, stamp):

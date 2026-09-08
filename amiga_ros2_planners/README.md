@@ -5,32 +5,37 @@ research repo (see its `module/theory/planners.py`,
 `module/contracts/schema.yaml`, `module/contracts/bt_actions.py`) onto
 this simulation's own live state — the orchard's own trees (instead of a
 static `map.pgm`/`obstacles_generated.pl`) and this robot's own tf2 pose
-(instead of a Prolog situation history) — and exposes both as ROS2
-services for a future BT.cpp leaf to call.
+(instead of a Prolog situation history) — and exposes `PlanWith`, `MoveTo`,
+and every Condition except `HaltedWith` as ROS2 services/actions for a
+future BT.cpp leaf to call.
 
-This package does **not** implement `MoveTo` or `HaltedWith`, does not
-register any BT.cpp leaf node in `amiga_ros2_behavior_tree`, and does
-not run a robot. It is the backend layer underneath those — see "Known
-limitations / what's next" below for exactly what's left.
+This package does **not** register any BT.cpp leaf node in
+`amiga_ros2_behavior_tree`, and `MoveTo`'s own `FollowPath` wiring has not
+been exercised against a live Nav2 stack. It is the backend layer
+underneath a BT.cpp tree — see "Known limitations / what's next" below.
 
 ## What's in here
 
 | File | Status | What it is |
 |---|---|---|
 | `amiga_ros2_planners/geometry.py` | new | Circle-obstacle geometry (distance/nearest/line-of-sight) used by `condition_service_node.py`. |
-| `amiga_ros2_planners/planning_core.py` | **ported + adapted** | `astar()`, `fit_spline`/`bspline_to_bezier_chain`, `straight_control_points`, **and now also the full Voronoi roadmap machinery and `follow_boarder`** (`_polygon_edges`, `_edge_crosses`, `_inside_polygon`, `_signed_polygon_area`, `_offset_boundary_clockwise`, `_voronoi_sites`, `_voronoi_roadmap_edges`, `_dijkstra_shortest_path`, ...) are **byte-for-byte ports** of `problog_project/module/theory/planners.py` — same function names, same bodies, operating on the same `[(id, [(x,y), ...]), ...]` polygon shape `problog_project`'s own `_OBSTACLE_POLYGONS` uses. The only genuinely new pieces are `circle_to_polygon`/`obstacles_to_polygons` (this simulation's one obstacle source is circular tree canopies, not polygons — see the module's own docstring for why porting the *general* polygon algorithm, rather than a circle-specialized shortcut, matters for whatever a *future* obstacle source turns out to be) and `build_occupancy_grid`/`OccupancyGridMap` (A* needs a grid; there's no `map.yaml` here — see `orchard_map.py` below). |
-| `amiga_ros2_planners/orchard_map.py` | new | Builds ONE whole-orchard `nav_msgs/OccupancyGrid` from the live tree list, and converts it to/from `planning_core.OccupancyGridMap`. |
-| `amiga_ros2_planners/orchard_map_node.py` | new | Publishes that grid once at startup (and again if the orchard is ever republished with a different tree count) — see "2D map extraction" below. |
+| `amiga_ros2_planners/planning_core.py` | **ported + adapted** | `astar()`, `fit_spline`/`bspline_to_bezier_chain`, `straight_control_points`, and the full Voronoi roadmap machinery and `follow_boarder` (`_polygon_edges`, `_edge_crosses`, `_inside_polygon`, `_signed_polygon_area`, `_offset_boundary_clockwise`, `_voronoi_sites`, `_voronoi_roadmap_edges`, `_dijkstra_shortest_path`, ...) are **byte-for-byte ports** of `problog_project/module/theory/planners.py` — same function names, same bodies, operating on the same `[(id, [(x,y), ...]), ...]` polygon shape `problog_project`'s own `_OBSTACLE_POLYGONS` uses. The only genuinely new pieces are `circle_to_polygon`/`obstacles_to_polygons` (this simulation's one obstacle source is circular tree canopies, not polygons) and `build_occupancy_grid`/`build_grid_map`/`OccupancyGridMap` (A* needs a grid; there's no `map.yaml` here — see `orchard_map.py` below). |
+| `amiga_ros2_planners/bezier.py` | new | Resamples a chained-cubic-Bezier control point list into an `(x, y, yaw)` polyline via the analytic Bezier derivative — what turns `PlanPath`'s own output into something `nav_msgs/Path` (and so `MoveTo`) can use. Pure math, no ROS import, unit-tested. |
+| `amiga_ros2_planners/orchard_map.py` | new | Converts `planning_core.OccupancyGridMap` to/from `nav_msgs/OccupancyGrid` (the actual grid-building is `planning_core.build_grid_map`, kept ROS-free — see below). |
+| `amiga_ros2_planners/orchard_map_node.py` | new | Publishes the whole-orchard grid once at startup (and again if the orchard is ever republished with a different tree count) — see "2D map extraction" below. |
 | `amiga_ros2_planners/gps.py` | new | lat/lon → local ENU metres, the forward direction of the same equirectangular approximation `orchard_management.cpp` already uses in reverse. |
-| `amiga_ros2_planners/obstacle_types.py` | new | The plain `Obstacle(id, x, y, radius)` shape, split out so the planning/geometry core has no ROS import (same testability goal `bt_actions.py` documents for its own planners.py dependency). |
-| `amiga_ros2_planners/orchard_obstacles.py` | new | Subscribes to the same tree-info JSON topic `orchard_management_node` already caches; converts every tree into a circular `Obstacle`. This simulation's replacement for problog_project's static `obstacles_generated.pl`. |
+| `amiga_ros2_planners/obstacle_types.py` | new | The plain `Obstacle(id, x, y, radius)` shape, split out so the planning/geometry core has no ROS import. |
+| `amiga_ros2_planners/orchard_obstacles.py` | new | Subscribes to the same tree-info JSON topic `orchard_management_node` already caches; converts every tree into a circular `Obstacle`. Accepts both JSON shapes this repo's own fixtures carry (see its own docstring). |
 | `amiga_ros2_planners/pose.py` | new | tf2-based current-position lookup. This simulation's replacement for problog_project's `now/2 + at/4` situation fluent. |
 | `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm`. |
-| `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`** (excluded on purpose; see its own docstring). |
+| `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`**. |
 | `amiga_ros2_planners/battery_sim_node.py` | new | A simulated battery percentage (this simulation has no real one) so `Battery*` conditions have something to read. |
-| `amiga_interfaces/srv/PlanPath.srv` | new | Request/response for the planner service. |
-| `amiga_interfaces/srv/EvaluateCondition.srv` | new | Request/response for the condition service. |
-| `schemas/amiga_btcpp_planners.xsd` | new (local copy) | `amiga_ros2_behavior_tree`'s own `amiga_btcpp.xsd`, extended with `PlanWith`/`MoveTo`/every Condition **except `HaltedWith`, which is deliberately excluded from the schema itself** (not merely unimplemented — see the file's own header). A **local copy**, not an edit to the submodule in place — see the file's own header for why (it's vendored from a separate repo this project can't push to). |
+| `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls a real subset of `triggers` against `condition_service_node` and cancels early if one fires. **Not yet exercised against a live Nav2 stack** — see its own module docstring and "Known limitations" below. |
+| `amiga_interfaces/srv/PlanPath.srv`, `EvaluateCondition.srv`, `action/MoveTo.action` | new | Interfaces for the three backends above. |
+| `schemas/amiga_btcpp_planners.xsd` | new (local copy) | `amiga_ros2_behavior_tree`'s own `amiga_btcpp.xsd`, extended with `PlanWith`/`MoveTo`/every Condition except `HaltedWith` (deliberately excluded — see the file's own header), plus `Inverter` and a broadened `Fallback` (see "Running a problog_project BT" below for why). A **local copy**, not an edit to the submodule in place. |
+| `scripts/export_orchard_map.py` | new | Standalone (no ROS2 needed), extracts a real orchard from a checked-in mission fixture and writes a `map.pgm`/`map.yaml` pair — see "Saved orchard map instance" below. |
+| `scripts/adapt_problog_tree.py` | new | Standalone, adapts a `problog_project` tree's root element to this repo's own convention — see "Running a problog_project BT" below. |
+| `maps/orchard_map.pgm`, `maps/orchard_map.yaml`, `maps/orchard_map_trees.json` | new (checked in) | A saved instance of the real 144-tree orchard, in `problog_project`'s own `map.yaml` format — see below. |
 
 ## Running it
 
@@ -41,13 +46,15 @@ ros2 launch amiga_ros2_planners planners.launch.py namespace:=amiga2
 ```
 
 Starts `orchard_map_node`, `plan_service_node`, `condition_service_node`,
-and `battery_sim_node`. All need the orchard already published (i.e. run
-alongside `amiga_ros2_behavior_tree`'s own `bt.launch.py`, or at least
-`orchard_management_node`) and a live tf2 pose (Nav2/AMCL, or whatever
-localization stack is running) to answer anything meaningfully — before
-either exists, requests return `reason: "no_pose"` (and `astar` falls
-back to a query-scoped grid with a logged warning until
-`orchard_map_node` has published one — see below).
+`move_to_node`, and `battery_sim_node`. All need the orchard already
+published (i.e. run alongside `amiga_ros2_behavior_tree`'s own
+`bt.launch.py`, or at least `orchard_management_node`) and a live tf2
+pose (Nav2/AMCL) to answer anything meaningfully — before either exists,
+requests return `reason: "no_pose"` (and `astar` falls back to a
+query-scoped grid with a logged warning until `orchard_map_node` has
+published one). `move_to_node` additionally needs Nav2's
+`controller_server` running and reachable at its own `follow_path_action`
+param (default `follow_path`).
 
 Standalone testing without a robot at all:
 ```bash
@@ -55,10 +62,10 @@ ros2 service call /plan_path amiga_interfaces/srv/PlanPath \
   "{algorithm: 'astar', goal_x: 10.0, goal_y: 5.0}"
 ros2 service call /evaluate_condition amiga_interfaces/srv/EvaluateCondition \
   "{condition: 'DistanceBelow', goal_x: 10.0, goal_y: 5.0, threshold: 0.5}"
-ros2 topic echo /orchard/occupancy_grid --once  # the extracted 2D map, see below
+ros2 topic echo /orchard/occupancy_grid --once  # the extracted 2D map
+ros2 action send_goal /move_to amiga_interfaces/action/MoveTo \
+  "{control_points: [{x: 0.0, y: 0.0}, {x: 1.0, y: 0.0}, {x: 2.0, y: 0.0}, {x: 3.0, y: 0.0}]}"
 ```
-(the two service calls will answer `no_pose` until something publishes the
-`map`→`base_link` transform these default params look for).
 
 ### The datum parameter — read this before trusting a planned path
 
@@ -68,117 +75,196 @@ copied from `amiga-ros2-nav/amiga_localization/config/base_ekf.yaml`'s
 own `datum:`). Tree obstacles are converted from lat/lon into local
 (x,y) around this same point. **If your localization stack uses a
 different datum, set these params to match it** — otherwise tree
-obstacles will not line up with the robot's own tf2 pose, and the
-planners will confidently plan straight through (or around empty space
-instead of) real trees.
+obstacles will not line up with the robot's own tf2 pose.
 
 ## Do we reason over a 3D map of the orchard?
 
-**No — not before this revision, and not after it either.** Nothing in
-this package has ever read the Gazebo world's own mesh, point clouds, or
-any other 3D representation. "The orchard" has always meant the tree
-list's own lat/lon metadata (the same JSON `orchard_management_node`
-caches from `tcp_demux_node`'s second TCP frame — see
-`amiga_ros2_behavior_tree/README.md`), which `gps.py` converts straight
-into flat local `(x,y)` — a 2D abstraction from the very first line of
-code, the same way `problog_project`'s own `map.pgm`/`obstacles_generated.pl`
-never had a Z axis either.
+**No.** Nothing in this package reads the Gazebo world's own mesh, point
+clouds, or any other 3D representation. "The orchard" has always meant
+the tree list's own lat/lon metadata (the same JSON
+`orchard_management_node` caches from `tcp_demux_node`'s second TCP
+frame), which `gps.py` converts straight into flat local `(x,y)` — a 2D
+abstraction from the start, the same way `problog_project`'s own
+`map.pgm` never had a Z axis either.
 
 ### 2D map extraction at startup
 
-What *has* changed is **when** that gets turned into a grid.
-`orchard_map_node.py` now builds a single whole-orchard occupancy grid
-once (waiting for the orchard's first JSON payload, then rebuilding only
-if the tree count ever changes — e.g. a new mission) and publishes it as
-a standard `nav_msgs/OccupancyGrid` on `orchard/occupancy_grid`, with
-`TRANSIENT_LOCAL` durability (the same QoS Nav2's own `map_server` uses,
-so a late subscriber still gets it). `plan_service_node`'s `astar`
-algorithm now consumes this published grid directly instead of
-rebuilding a query-scoped one on every call — a closer match to
-`problog_project`'s own "load the map once at import time" design, and
-it also means the orchard's own obstacle layout is now visible in
-RViz/Foxglove/any other map consumer, like any other ROS map, not just
-an internal data structure. If no map has been published yet (e.g. this
-node started before `orchard_map_node` finished), `plan_service_node`
-falls back to the old per-query grid with a logged warning, so it still
-works, just without the caching benefit.
+`orchard_map_node.py` builds a single whole-orchard occupancy grid once
+(waiting for the orchard's first JSON payload, rebuilding only if the
+tree count changes) and publishes it as a standard
+`nav_msgs/OccupancyGrid` on `orchard/occupancy_grid` with
+`TRANSIENT_LOCAL` durability (matching Nav2's own `map_server`).
+`plan_service_node`'s `astar` consumes this directly, falling back to a
+per-query grid with a logged warning if it hasn't arrived yet. Voronoi,
+`follow_boarder`, and every condition still reason against the exact
+circle/polygon geometry rather than this raster grid, for precision —
+see `planning_core.py`'s own module docstring.
 
-Voronoi and `follow_boarder` do **not** use this raster grid at all —
-they never did in `problog_project` either, and still don't need to:
-both work directly against the obstacles' own polygon geometry (see the
-byte-for-byte porting note above), which is exact rather than
-grid-resolution-limited. `condition_service_node`'s `ObstacleInBound`/
-`ObstacleOnPath`/`LineOfSightClear` likewise reason directly against the
-live circle obstacle list (`geometry.py`), for the same precision
-reason — a rasterized grid would only add discretization error to a
-check that's already closed-form. If you'd rather have every check
-consult the *same* cached map object for consistency (at some cost in
-precision), that's a small, isolated change to `condition_service_node.py`
-alone — say so and I'll make it.
+### Saved orchard map instance
 
-## Extending `xml_validation` (point 1)
+`maps/orchard_map.pgm` + `maps/orchard_map.yaml` are a checked-in,
+ready-to-use instance of this simulation's real 144-tree orchard (18
+columns × 8 rows), extracted from
+`amiga_ros2_behavior_tree/examples/mv_10_60_sample.bin`'s own orchard
+JSON frame — the exact same fixture `scripts/demo_llm_auction.sh`
+describes as "the full 144-tree orchard". Written by
+`scripts/export_orchard_map.py`, in the **exact format**
+`problog_project`'s own `load_map_yaml` expects (verified directly by
+round-tripping the file through that same load logic in this session).
+`maps/orchard_map_trees.json` carries the raw tree list plus the datum
+used, for provenance/regeneration.
 
-`amiga_ros2_behavior_tree/schemas/amiga_btcpp.xsd` is a **submodule**
-(`gpt-mission-planner-schemas`, a separate, externally-owned repo this
-project has no push access to) — it was not edited in place. Instead,
-`schemas/amiga_btcpp_planners.xsd` here is a full local copy of it with
-`PlanWith`, `MoveTo`, and every Condition **except `HaltedWith`** added
-(`HaltedWith` is excluded from the schema entirely, not just
-unimplemented — see the file's own header for why: it needs a tree's
-own blackboard history, which no stateless service could ever answer,
-so a mission using it should fail validation now rather than parse and
-only fail later). Every original node type is unchanged, so a mission
-using only the original node set still validates against this file.
+**To use it in `BT_project`**: point `BT_PROBLEM_DIR` at a directory
+containing `map.yaml` (rename/symlink `orchard_map.yaml`→`map.yaml`,
+`orchard_map.pgm`→`map.pgm`, or edit the `image:` key in the `.yaml`),
+alongside that problem's own `obstacles_generated.pl`/`config.yaml`/
+`goal_formula.pl`. **The datum used here (the orchard's own first tree's
+lat/lon — see the script's own `--datum-lat`/`--datum-lon` docs) is an
+arbitrary local origin, not this simulation's own live `datum_lat`/
+`datum_lon`** — so `config.yaml`'s own `start_x`/`start_y` and any
+`goal="X;Y"` value need to be expressed in THIS map's frame (origin at
+`maps/orchard_map.yaml`'s own `origin:` value), not carried over from
+whatever frame a different map used.
 
-To run a mission using the new nodes through `bt_runner`, point it at
-this schema instead of the submodule's default:
+To regenerate against a different fixture or resolution:
 ```bash
-ros2 launch amiga_ros2_behavior_tree bt.launch.py \
-    mission_schema:=$(ros2 pkg prefix amiga_ros2_planners)/share/amiga_ros2_planners/schemas/amiga_btcpp_planners.xsd
+python3 scripts/export_orchard_map.py \
+    --bin ../amiga_ros2_behavior_tree/examples/sample_20_64.bin \
+    --out maps --map-name orchard_map --resolution 0.1
 ```
 
-**Note on `problog_project`'s own tree XML**: its root element
-(`<root BTCPP_format="4" main_tree_to_execute="MainTree">`) uses vanilla
-BT.cpp conventions, which differ from this repo's own
-(`<root BTCPP_format="4" schema_location="...">` plus a required
-`<Mission>` description, no `main_tree_to_execute` — see any file in
-`amiga_ros2_behavior_tree/examples/` for the shape `bt_runner` actually
-expects). A `problog_project` tree needs its root element adapted to
-this repo's own convention before `bt_runner` will accept it; the leaf
-nodes themselves (`PlanWith`, `MoveTo`, `DistanceBelow`, ...) need no
-changes and validate as-is against `amiga_btcpp_planners.xsd` (verified
-directly against `problems/problem0/behavior_tree.xml`'s own tree body,
-and separately verified that a tree using `HaltedWith` is now rejected).
+## Running a `problog_project` BT in this simulation — checklist
+
+Given one of `BT_project/problems/<name>/behavior_tree.xml`, here's
+everything between it and actually ticking in `bt_runner`:
+
+1. **Root element shape** — mechanical, automated:
+   ```bash
+   python3 scripts/adapt_problog_tree.py \
+       --in .../problems/problem0/behavior_tree.xml --out adapted.xml
+   ```
+   Adds the `<Mission>` element and `schema_location` attribute this
+   repo's schema requires; `main_tree_to_execute` is left as-is
+   (`amiga_btcpp_planners.xsd` now accepts it, since `bt_runner` never
+   reads it for a single-`<BehaviorTree>` file anyway). Verified against
+   all five checked-in `problog_project` problems (`problem0`–`problem4`)
+   — every one now validates against `amiga_btcpp_planners.xsd` after
+   this step alone, **including two base-schema gaps this revision also
+   fixed while testing that**: `<Inverter>` (BT.cpp's own negation
+   decorator, used inline by `problem3`) wasn't declared as a node type
+   at all, and `<Fallback>` only accepted `<Sequence>` children (`problem4`
+   puts a bare `<ReactiveSequence>` there) — both now fixed in
+   `amiga_btcpp_planners.xsd` for every tree, not just `problog_project`'s.
+
+2. **BT.cpp leaf registration — the largest remaining gap.** `PlanWith`,
+   `MoveTo`, and the eight implemented conditions have **ROS2
+   service/action backends** (this package) but **no C++ leaf node**
+   registered in `bt_runner`'s `BehaviorTreeFactory`. Until leaves like
+   `BT::RosServiceNode<PlanPath>` / `BT::RosActionNode<MoveTo>` are
+   written (following the exact pattern of every existing leaf in
+   `amiga_ros2_behavior_tree/src/actions/`) and added to `bt.cpp`'s own
+   `registerNodeType<...>()` calls, `bt_runner` will fail to build the
+   tree (`factory.createTreeFromText` throws "unknown node type") even
+   though the XML itself now validates. Nothing in this package does
+   this — it's the next concrete step, and hasn't been started.
+
+3. **Goal points are in the wrong frame.** A `goal="11.675;11.525"`
+   value is expressed in that PROBLEM's own `map.yaml` frame (or,
+   equivalently, whatever frame you exported in "Saved orchard map
+   instance" above) — **not** this simulation's live orchard/tf2 frame.
+   Either re-express every goal point in this sim's own local (x,y) (the
+   same frame `plan_service_node`'s `datum_lat`/`datum_lon` establish),
+   or make sure the map you're testing against uses the SAME frame the
+   goal points were authored in.
+
+4. **`obstacle_id` values won't resolve.** `follow_boarder`/
+   `LineOfSightClear` reference obstacle ids from that problem's own
+   `obstacles_generated.pl` (e.g. `obs5`). This simulation's own ids are
+   `tree_<tree_index>` (`orchard_obstacles.py`). Remap any such id before
+   running the tree, or the planner/condition will report
+   `no_obstacle`/`no_such_obstacle`.
+
+5. **`HaltedWith`** — if the tree uses it, it needs to be removed or
+   replaced: `amiga_btcpp_planners.xsd` now rejects it outright (per your
+   own instruction), and nothing implements it.
+
+6. **Battery is always live here**, unlike `problog_project`'s own
+   per-problem `config.yaml` `battery.enabled` toggle — `battery_sim_node`
+   always publishes a draining percentage, so `Battery*`
+   conditions/triggers are always evaluable regardless of what that
+   problem's own config said. Harmless if the tree never checks battery;
+   worth noting if a problem was authored assuming `battery.enabled: false`.
+
+7. **Everything needs to actually be running**: this package's own
+   `planners.launch.py`, `amiga_ros2_behavior_tree`'s `bt.launch.py`
+   (pointed at `amiga_btcpp_planners.xsd` via `mission_schema:=...`),
+   Nav2's `controller_server` (for `MoveTo`), and a live localization
+   stack publishing tf2 (every planner/condition call resolves "current
+   position" from tf2, `problog_project`'s own `now/2 + at/4`
+   equivalent).
+
+## The `MoveTo` → Nav2 `FollowPath` wrapper
+
+Yes, this needed exactly the wrapper you were describing, and it's what
+`move_to_node.py` now is: `MoveTo`'s own "trajectory" is a
+chained-cubic-Bezier control point list (`PlanPath`'s own output shape),
+but Nav2's `controller_server` `FollowPath` action (the "extremely low
+level" Nav2 primitive this simulation uses for `MoveTo`, bypassing
+`planner_server`/`bt_navigator`/recoveries entirely) takes a
+`nav_msgs/Path` — a plain sequence of stamped poses, not Bezier control
+points. `move_to_node.py`:
+
+1. Samples `control_points` into an `(x, y, yaw)` polyline via
+   `bezier.py` (the curve's own analytic tangent → yaw, not
+   finite-differenced), and builds a `nav_msgs/Path` from it.
+2. Sends that `Path` as a `FollowPath` goal, forwarding its own
+   `distance_to_goal` feedback back out as `MoveTo`'s own feedback.
+3. While `FollowPath` runs, polls a real subset of `triggers`
+   (`obstacle_in_bound(T)`, `obstacle_on_path(T)`, `battery_below(T)`,
+   `battery_over(T)`, `battery_equal(T)` — see `TRIGGER_FUNCTOR_TO_CONDITION`
+   in the module) against `condition_service_node`'s `EvaluateCondition`,
+   cancelling `FollowPath` and reporting that trigger as `MoveTo`'s own
+   `reason` the moment one fires.
+
+**Not carried over** (see `move_to_node.py`'s own module docstring for
+the full reasoning): the automatic collision/battery triggers
+`problog_project`'s own `bt_to_prolog.py` injects into every leg on the
+Prolog side (nothing injects them here — only what `triggers` the Goal
+itself lists gets checked); `line_of_sight_clear(...)`/
+`crosses_segment(...)` (need a goal point this action's own Goal has no
+slot for); and the structural ReactiveSequence-sibling guard derivation
+schema.yaml describes (a BT.cpp-tree-structure concept, meaningless at
+this node's level — it belongs in a future BT.cpp `MoveTo` leaf, not
+here).
+
+**This has not been run against a live Nav2 `controller_server`** — no
+ROS2/Nav2 environment was available in this session to exercise it.
+`bezier.py`'s own sampling is unit-tested and verified (endpoint
+accuracy, yaw-follows-tangent, no duplicated segment-boundary points);
+the `FollowPath` action-client integration itself should be smoke-tested
+against your own sim before relying on it — in particular the nested
+`rclpy.spin_until_future_complete`/`spin_once` calls inside the action's
+own execute callback, a common but not bulletproof rclpy pattern for
+"call a service/action from inside another action's callback" (see the
+node's own comment on why a `ReentrantCallbackGroup` + per-goal execute
+thread makes it safe here, rather than a genuinely async rewrite).
 
 ## Known limitations / what's next
 
-- **`MoveTo` has no backend.** This pass was explicitly scoped to
-  planners + conditions. A previous conversation in this session sketched
-  the intended approach: a `BT::RosServiceNode`/`RosActionNode` leaf in
-  `amiga_ros2_behavior_tree` that samples `PlanWith`'s Bezier
-  `control_points` into a `nav_msgs/Path` and calls Nav2's
-  `controller_server`-only `FollowPath` action (no planner/costmap/
-  recovery layers) for open-loop trajectory tracking.
-- **`HaltedWith` is not implemented anywhere**, and is now also excluded
-  from `xml_validation` — see above. It needs a tree's own
-  blackboard/situation history, not live simulation state; a future
-  BT.cpp leaf should read this from its own tree directly rather than a
-  service.
-- **No BT.cpp leaf nodes exist yet** for any of `PlanWith`/`MoveTo`/the
-  eight implemented conditions — `plan_service_node`/`condition_service_node`
-  are ROS2 service *backends*, callable today via `ros2 service call` or
-  a quick test client, but not yet wired into `bt_runner`'s own
-  `BehaviorTreeFactory::registerNodeType<...>()` calls.
+- **No BT.cpp leaf nodes exist yet** for `PlanWith`/`MoveTo`/the eight
+  implemented conditions — see checklist item 2 above. This is now the
+  single largest gap between "backends exist" and "a `problog_project`
+  tree actually runs end to end in Gazebo."
+- **`move_to_node`'s `FollowPath` integration is untested** — see above.
+- **`HaltedWith` is not implemented anywhere**, and is excluded from
+  `xml_validation` entirely.
 - **`ObstacleOnPath` is a partial port** — see
   `condition_service_node.py`'s own `_obstacle_on_path` docstring. Its
-  documented semantics need a walk's own future trajectory (i.e.
-  `MoveTo`'s own output), which doesn't exist yet; the current
-  implementation only checks the robot's *current* position, not its
-  planned path.
+  documented semantics need a walk's own future trajectory, which
+  `move_to_node` doesn't expose anywhere yet; the current implementation
+  only checks the robot's *current* position.
+- **`MoveTo`'s own trigger vocabulary is a real subset**, not the full
+  one `schema.yaml` documents — see "Not carried over" above.
 - **The circle→polygon approximation (`_CIRCLE_POLYGON_SIDES = 16`) is a
-  tunable, not exact.** A 16-gon is visually indistinguishable from a
-  circle at orchard scale, but `follow_boarder`'s offset boundary and
-  Voronoi's roadmap edges are technically following a many-sided
-  polygon, not a true circle — raise `_CIRCLE_POLYGON_SIDES` in
-  `planning_core.py` if a future scenario needs tighter precision very
-  close to a tree's own canopy edge.
+  tunable, not exact** — raise it in `planning_core.py` if a future
+  scenario needs tighter precision very close to a tree's own canopy edge.

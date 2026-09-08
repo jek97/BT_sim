@@ -19,10 +19,18 @@
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>action_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>amiga_interfaces</depend>
   <depend>python3-numpy</depend>
   <depend>python3-scipy</depend>
+  <depend>python3-yaml</depend>
+  <depend>python3-pil</depend>
+
+  <!-- move_to_node's own FollowPath client -- Nav2's controller_server,
+       used standalone (no planner_server/bt_navigator/recoveries) as
+       MoveTo's low-level trajectory-following primitive. -->
+  <depend>nav2_msgs</depend>
 
   <!-- Reads the same tree-info JSON topic orchard_management_node caches
        (see amiga_ros2_behavior_tree/src/orchard_management.cpp) -- runtime

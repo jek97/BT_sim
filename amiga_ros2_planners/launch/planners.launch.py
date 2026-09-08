@@ -45,6 +45,16 @@ def generate_launch_description():
             description="Metres per cell of the whole-orchard occupancy "
             "grid orchard_map_node builds once at startup."),
         DeclareLaunchArgument("map_margin", default_value="5.0"),
+        DeclareLaunchArgument(
+            "follow_path_action", default_value="follow_path",
+            description="Nav2 controller_server's own FollowPath action "
+            "name -- move_to_node dials this directly, no planner_server/"
+            "bt_navigator/recoveries involved."),
+        DeclareLaunchArgument(
+            "controller_id", default_value="",
+            description="Nav2 controller plugin id to request (empty = "
+            "controller_server's own default)."),
+        DeclareLaunchArgument("samples_per_segment", default_value="10"),
 
         Node(
             package="amiga_ros2_planners",
@@ -93,6 +103,19 @@ def generate_launch_description():
                 "reference_frame": LaunchConfiguration("reference_frame"),
                 "base_frame": LaunchConfiguration("base_frame"),
                 "battery_topic": LaunchConfiguration("battery_topic"),
+            }],
+        ),
+        Node(
+            package="amiga_ros2_planners",
+            executable="move_to",
+            name="move_to_node",
+            namespace=namespace,
+            output="screen",
+            parameters=[{
+                "reference_frame": LaunchConfiguration("reference_frame"),
+                "samples_per_segment": LaunchConfiguration("samples_per_segment"),
+                "follow_path_action": LaunchConfiguration("follow_path_action"),
+                "controller_id": LaunchConfiguration("controller_id"),
             }],
         ),
         Node(
