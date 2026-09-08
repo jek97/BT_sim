@@ -13,9 +13,20 @@ The request deliberately carries NO start position: PlanWith's own
 contract is "plan from the CURRENT position" (schema.yaml's own words),
 so this server resolves it itself via tf2 (PoseProvider) at call time --
 same reasoning as every other live-state lookup in this package (see
-pose.py's own docstring). A caller that already knows it wants to plan
-from somewhere other than "here" isn't calling PlanWith; that is a
-different, hypothetical planning query this service doesn't serve.
+pose.py's own docstring).
+
+A* plans against the whole-orchard grid orchard_map_node publishes
+(subscribed here with TRANSIENT_LOCAL durability, so it's picked up
+whenever that node published it -- before or after this one started),
+falling back to a query-scoped grid built on the spot
+(planning_core.build_occupancy_grid) if that map hasn't arrived yet.
+Voronoi and follow_boarder both work on obstacle_polygons (see
+planning_core.py's own module docstring on why they're byte-for-byte
+ports of problog_project's polygon algorithms, not a circle-specialized
+rewrite) -- built fresh each call via
+planning_core.obstacles_to_polygons, since a regular-polygon
+approximation is cheap and these two algorithms don't need a cached
+raster the way A* does.
 
 This node does NOT execute any BT.cpp leaf itself -- it is the backend a
 future BT::RosServiceNode<PlanPath> C++ leaf in amiga_ros2_behavior_tree
@@ -25,10 +36,13 @@ standalone testing.
 """
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
+from nav_msgs.msg import OccupancyGrid
 
 from amiga_interfaces.srv import PlanPath
 from amiga_ros2_planners import planning_core
+from amiga_ros2_planners.orchard_map import occupancy_grid_msg_to_grid
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
 from amiga_ros2_planners.pose import PoseProvider
 
@@ -46,6 +60,7 @@ class PlanServiceNode(Node):
         self.declare_parameter("tree_obstacle_radius", 0.5)
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("base_frame", "base_link")
+        self.declare_parameter("map_topic", "orchard/occupancy_grid")
 
         self._obstacles = OrchardObstacleStore(
             self,
@@ -60,8 +75,19 @@ class PlanServiceNode(Node):
             self.get_parameter("base_frame").value,
         )
 
+        self._static_grid = None
+        map_qos = QoSProfile(depth=1)
+        map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        map_qos.reliability = ReliabilityPolicy.RELIABLE
+        self.create_subscription(
+            OccupancyGrid, self.get_parameter("map_topic").value,
+            self._on_map, map_qos)
+
         self._srv = self.create_service(PlanPath, "plan_path", self._on_request)
         self.get_logger().info("plan_service_node ready on 'plan_path'")
+
+    def _on_map(self, msg):
+        self._static_grid = occupancy_grid_msg_to_grid(msg)
 
     def _on_request(self, request, response):
         xy = self._pose.get_xy()
@@ -75,17 +101,26 @@ class PlanServiceNode(Node):
 
         algorithm = request.algorithm
         if algorithm == "astar":
-            control_points = planning_core.plan_astar_points(
-                sx, sy, request.goal_x, request.goal_y, obstacles)
+            if self._static_grid is not None:
+                control_points = planning_core.plan_astar_points(
+                    sx, sy, request.goal_x, request.goal_y, grid=self._static_grid)
+            else:
+                self.get_logger().warn(
+                    "no orchard map received yet from orchard_map_node -- "
+                    "falling back to a query-scoped grid")
+                control_points = planning_core.plan_astar_points(
+                    sx, sy, request.goal_x, request.goal_y, obstacles=obstacles)
         elif algorithm == "straight":
             control_points = planning_core.straight_control_points(
                 sx, sy, request.goal_x, request.goal_y)
         elif algorithm == "voronoi":
+            obstacle_polygons = planning_core.obstacles_to_polygons(obstacles)
             control_points = planning_core.plan_voronoi_points(
-                sx, sy, request.goal_x, request.goal_y, obstacles)
+                sx, sy, request.goal_x, request.goal_y, obstacle_polygons)
         elif algorithm == "follow_boarder":
+            obstacle_polygons = planning_core.obstacles_to_polygons(obstacles)
             control_points = planning_core.follow_boarder_points(
-                sx, sy, request.obstacle_id, request.offset, obstacles)
+                sx, sy, request.obstacle_id, request.offset, obstacle_polygons)
         else:
             response.control_points = []
             response.reason = f"unknown_algorithm({algorithm})"

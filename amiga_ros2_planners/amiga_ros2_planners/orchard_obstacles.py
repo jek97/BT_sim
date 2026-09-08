@@ -35,9 +35,17 @@ class OrchardObstacleStore:
         self._datum_lon = datum_lon
         self._tree_radius = tree_radius
         self._trees = []  # raw dicts from the last "trees" array received
+        self._received = False  # distinguishes "no message yet" from "0 trees"
         self._sub = node.create_subscription(String, topic, self._on_json, 10)
 
+    def has_received(self):
+        """True once at least one orchard payload has arrived -- lets a
+        one-shot caller (orchard_map_node) tell "nothing published yet"
+        apart from "published, genuinely zero trees"."""
+        return self._received
+
     def _on_json(self, msg):
+        self._received = True
         try:
             data = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError) as exc:

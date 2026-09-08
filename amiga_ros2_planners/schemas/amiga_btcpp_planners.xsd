@@ -5,10 +5,13 @@
   A LOCAL COPY of amiga_ros2_behavior_tree/schemas/amiga_btcpp.xsd (the
   gpt-mission-planner-schemas submodule), extended with the problog_project
   node set this package ports: PlanWith, MoveTo, and every Condition in
-  problog_project/module/contracts/schema.yaml (including HaltedWith, for
-  tree-authoring completeness, even though this package's own
-  condition_service_node deliberately does not implement it — see that
-  node's own module docstring).
+  problog_project/module/contracts/schema.yaml EXCEPT HaltedWith, which is
+  deliberately left out of this schema entirely (not just unimplemented) —
+  condition_service_node.py's own module docstring explains why it can never
+  be a stateless-service condition at all (it needs a tree's own blackboard
+  history), so there is no point accepting it as valid XML here either; a
+  mission using it should fail xml_validation now rather than parse and only
+  fail later when nothing can answer it.
 
   Why a COPY instead of an edit to the submodule in place: that schema is
   vendored from a separate, externally-owned repository
@@ -105,7 +108,6 @@
             <xs:element name="DistanceBelow" type="distanceBelowType" />
             <xs:element name="DistanceEqual" type="distanceEqualType" />
             <xs:element name="DistanceOver" type="distanceOverType" />
-            <xs:element name="HaltedWith" type="haltedWithType" />
             <xs:element name="ObstacleInBound" type="obstacleInBoundType" />
             <xs:element name="ObstacleOnPath" type="obstacleOnPathType" />
             <xs:element name="BatteryBelow" type="batteryBelowType" />
@@ -316,14 +318,11 @@
         <xs:attribute name="threshold" type="portValueType" use="required" />
     </xs:complexType>
 
-    <!-- HaltedWith — listed for tree-authoring completeness only; this
-         package's own condition_service_node deliberately does not
-         implement it (needs tree-local blackboard history, not a
-         service's to have — see EvaluateCondition.srv's own header). -->
-    <xs:complexType name="haltedWithType">
-        <xs:attribute name="name" type="taskNameType" use="optional" />
-        <xs:attribute name="reason" type="xs:string" use="required" />
-    </xs:complexType>
+    <!-- HaltedWith is intentionally NOT declared anywhere in this schema
+         — see this file's own header for why (it needs a tree's own
+         blackboard history, which no stateless service can ever answer,
+         so it's excluded from xml_validation entirely rather than
+         merely unimplemented). -->
 
     <!-- Obstacle* -->
     <xs:complexType name="obstacleInBoundType">

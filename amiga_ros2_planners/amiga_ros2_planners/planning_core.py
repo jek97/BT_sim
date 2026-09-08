@@ -3,43 +3,45 @@ planning_core.py
 
 The four PlanWith algorithms (astar/straight/voronoi/follow_boarder)
 ported from problog_project/module/theory/planners.py onto this
-simulation's own orchard, for plan_service_node.py to call. Ported, not
-copied: problog_project's planners work against a static map.pgm/
-map.yaml occupancy grid and hand-authored obstacle_polygon/2 facts
-loaded once from a problem directory; this simulation has neither --
-its obstacles are the orchard's own trees, learned at runtime from
-whatever orchard_management_node has cached (see orchard_obstacles.py),
-each one circular (canopy center + radius) rather than an arbitrary
-polygon.
+simulation's own orchard, for plan_service_node.py to call.
 
-What transferred UNCHANGED (still the exact same computation, just
-copied over): _straight_control_points, the A* search itself (astar()/
-_reconstruct_path), and the B-spline-to-Bezier-chain fit
-(fit_spline/bspline_to_bezier_chain) -- none of those three cared what
-shape the obstacles were.
+_straight_control_points, the A* search itself (astar()/
+_reconstruct_path), the B-spline-to-Bezier-chain fit
+(fit_spline/bspline_to_bezier_chain), AND -- as of this revision --
+Voronoi (_voronoi_sites/_segment_crosses_any_obstacle/
+_voronoi_roadmap_edges/_insert_point_into_roadmap/
+_dijkstra_shortest_path/_voronoi_control_points) and follow_boarder
+(_polygon_edges/_edge_crosses/_inside_polygon/_signed_polygon_area/
+_offset_boundary_clockwise/_follow_boarder_control_points) are ALL
+BYTE-FOR-BYTE ports of problog_project's own functions of the same
+name -- not the circle-simplified rewrite an earlier revision of this
+file used. Kept polygon-general on purpose: this orchard's obstacles
+happen to be circular trees today, but the whole point of porting the
+ORIGINAL polygon algorithm rather than a circle-specialized shortcut is
+that a future obstacle source (a hedgerow, a parked implement, another
+robot's own footprint) need not be circular at all -- obstacle_polygons
+below is a plain [(id, [(x,y), ...]), ...] list, exactly
+problog_project's own _OBSTACLE_POLYGONS shape, just passed as a
+parameter here (problog_project loads it once from
+obstacles_generated.pl at import time; this simulation has no such
+file, so plan_service_node builds this list itself each call from
+whatever OrchardObstacleStore currently reports -- see
+circle_to_polygon/obstacles_to_polygons below for the one adapter step
+that differs).
 
-What changed and WHY:
-  - A* needs a grid. There is no map.yaml here, so build_occupancy_grid
-    below rasterizes one on the fly from the current obstacle list plus
-    the start/goal points, sized just large enough to cover the query
-    (see its own docstring) -- a query-scoped grid instead of a
-    once-per-process static one, since which trees are relevant changes
-    with the robot's own position instead of being fixed at import
-    time.
-  - Voronoi and follow_boarder both worked from problog_project's own
-    _OBSTACLE_POLYGONS (arbitrary polygons, boundary-sampled for sites/
-    offsetting). A circular tree's boundary has a closed form, so both
-    are SIMPLER here than a mechanical port of the polygon code would
-    have been: follow_boarder is exactly a concentric circle at
-    radius+offset (no per-edge outward-normal probing needed, see
-    problog_project's own _offset_boundary_clockwise for the polygon
-    version this replaces), and Voronoi sites are evenly-spaced samples
-    around each tree's own circle instead of along its polygon's edges.
-    The roadmap-building machinery downstream of "a list of boundary
-    sample points" (ridge filtering, closest-point-on-edge insertion,
-    Dijkstra) is otherwise the same idea, just no longer needing an
-    arbitrary-polygon inside-test -- geometry.py's circle primitives
-    stand in for collision_geometry.py's polygon ones.
+Only two things are genuinely NEW rather than ported:
+  - circle_to_polygon/obstacles_to_polygons: today's only obstacle
+    source (orchard_obstacles.py) reports circular canopies, not
+    polygons, so every circle is approximated once as a regular N-gon
+    before being handed to the byte-for-byte-ported polygon functions
+    above -- these two are the ENTIRE adapter, nothing downstream of
+    them needs to know a tree was ever a circle.
+  - build_occupancy_grid/OccupancyGridMap: A* needs a grid, and there is
+    no map.pgm/map.yaml here -- see orchard_map.py for the whole-orchard,
+    built-once-at-startup counterpart to problog_project's own
+    load_map_yaml (this module's own build_occupancy_grid remains
+    available as a query-scoped fallback -- e.g. before orchard_map_node
+    has published anything yet, or for standalone testing).
 """
 import heapq
 import math
@@ -47,8 +49,6 @@ import math
 import numpy as np
 from scipy.interpolate import splprep, insert
 from scipy.spatial import Voronoi
-
-from amiga_ros2_planners.geometry import segment_intersects_circle
 
 # Same defaults as problog_project's planners.py (PLANNING_INFLATE_M/
 # OCC_THRESH/CONNECTIVITY there) -- planner-internal tuning, not a
@@ -59,8 +59,16 @@ GRID_MARGIN_M = 3.0
 OCC_THRESH = 50
 CONNECTIVITY = 8
 
-_VORONOI_SAMPLES_PER_TREE = 12
+# Same per-edge sample density problog_project's own
+# _BOUNDARY_SAMPLES_PER_EDGE/_VORONOI_SAMPLES_PER_EDGE use.
+_BOUNDARY_SAMPLES_PER_EDGE = 8
+_NORMAL_PROBE_EPS = 1.0e-3
+_VORONOI_SAMPLES_PER_EDGE = 6
 _VORONOI_EDGE_CHECK_SAMPLES = 6
+
+# Circle -> regular-polygon approximation, this simulation's one
+# adapter step -- see module docstring.
+_CIRCLE_POLYGON_SIDES = 16
 
 
 # =====================================================================
@@ -147,14 +155,40 @@ def _fit_or_straight(path_xy, sx, sy, gx, gy):
 
 
 # =====================================================================
+# Circle -> polygon adapter -- the ONE step that is new rather than
+# ported (see module docstring). Everything past this point takes
+# obstacle_polygons, exactly problog_project's own [(id, [(x,y), ...]),
+# ...] shape, and knows nothing about circles at all.
+# =====================================================================
+def circle_to_polygon(obstacle, num_sides=_CIRCLE_POLYGON_SIDES):
+    """One Obstacle(id, x, y, radius) -> (id, [(x,y), ...]) -- a regular
+    num_sides-gon approximating its canopy circle, vertices in
+    counterclockwise order (either winding works: every polygon
+    function below re-derives its own via _signed_polygon_area, same as
+    problog_project's own obstacle_polygon/2 facts make no winding
+    guarantee either)."""
+    vertices = [
+        (obstacle.x + obstacle.radius * math.cos(2.0 * math.pi * k / num_sides),
+         obstacle.y + obstacle.radius * math.sin(2.0 * math.pi * k / num_sides))
+        for k in range(num_sides)
+    ]
+    return obstacle.id, vertices
+
+
+def obstacles_to_polygons(obstacles, num_sides=_CIRCLE_POLYGON_SIDES):
+    """[Obstacle, ...] -> [(id, [(x,y), ...]), ...] -- see
+    circle_to_polygon above."""
+    return [circle_to_polygon(o, num_sides) for o in obstacles]
+
+
+# =====================================================================
 # A* -- astar()/_reconstruct_path unchanged from problog_project's
 # planners.py; OccupancyGridMap/build_occupancy_grid replace its
-# load_map_yaml (see module docstring for why).
+# load_map_yaml (see module docstring, and orchard_map.py, for why).
 # =====================================================================
 class OccupancyGridMap:
     """Same shape as problog_project's own OccupancyGridMap (a minimal
-    stand-in for nav_msgs/OccupancyGrid), built here from a live
-    obstacle list instead of loaded from a map.pgm/map.yaml pair."""
+    stand-in for nav_msgs/OccupancyGrid)."""
 
     def __init__(self, data, resolution, origin_x, origin_y):
         self.data = data
@@ -186,14 +220,10 @@ def build_occupancy_grid(obstacles, sx, sy, gx, gy,
                           margin=GRID_MARGIN_M,
                           inflate=PLANNING_INFLATE_M):
     """Rasterize a query-scoped occupancy grid: bounds are the bounding
-    box of (start, goal, every obstacle's own extent) plus `margin`, so
-    the grid always covers this one A* query without needing a
-    world-size parameter or a pre-built map. Each obstacle is stamped in
-    as a filled disk of its own radius plus `inflate` (the same
-    robot-clearance inflation problog_project's planners.py applies via
-    inflate_obstacles, just baked directly into the rasterization here
-    instead of a separate dilation pass, since obstacles are already
-    circles and inflating a circle is just a bigger circle)."""
+    box of (start, goal, every obstacle's own extent) plus `margin`.
+    Used as a fallback when no whole-orchard map has been published yet
+    (see orchard_map.py/orchard_map_node.py for the preferred,
+    built-once path) and directly by this module's own unit tests."""
     min_x = min(sx, gx, *(o.x - o.radius for o in obstacles)) - margin \
         if obstacles else min(sx, gx) - margin
     max_x = max(sx, gx, *(o.x + o.radius for o in obstacles)) + margin \
@@ -282,14 +312,25 @@ def _reconstruct_path(came_from, current):
     return path
 
 
-def plan_astar_points(sx, sy, gx, gy, obstacles):
-    """Grid-based A* planner over a grid rasterized from `obstacles`
-    (see build_occupancy_grid). Returns [(x,y), ...] control points, or
-    None if start/goal fall on an obstacle cell or no path exists."""
+def plan_astar_points(sx, sy, gx, gy, obstacles=None, grid=None):
+    """Grid-based A* planner. Pass a pre-built `grid` (an
+    OccupancyGridMap -- e.g. orchard_map.occupancy_grid_msg_to_grid's
+    output, cached from orchard_map_node's own published map) to plan
+    against a grid built ONCE, matching problog_project's own
+    load-once-at-import-time map; omit it (pass `obstacles` instead) to
+    fall back to a query-scoped grid rasterized on the spot via
+    build_occupancy_grid, e.g. before that map has been published yet.
+    Returns [(x,y), ...] control points, or None if start/goal fall on
+    an obstacle cell or no path exists."""
     sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
-    grid = build_occupancy_grid(obstacles, sx, sy, gx, gy)
+    if grid is None:
+        grid = build_occupancy_grid(obstacles or [], sx, sy, gx, gy)
+
     start_rc = grid.world_to_grid(sx, sy)
     goal_rc = grid.world_to_grid(gx, gy)
+
+    if not grid.in_bounds(*start_rc) or not grid.in_bounds(*goal_rc):
+        return None
 
     if start_rc == goal_rc:
         return [(sx, sy)] * 4
@@ -303,31 +344,140 @@ def plan_astar_points(sx, sy, gx, gy, obstacles):
 
 
 # =====================================================================
-# VORONOI -- roadmap machinery ported from problog_project's planners.py
-# (_voronoi_roadmap_edges/_insert_point_into_roadmap/
-# _dijkstra_shortest_path are the same idea, unchanged in spirit);
-# _voronoi_sites/_segment_crosses_any_obstacle rewritten for circular
-# obstacles (see module docstring).
+# Polygon geometry -- byte-for-byte ports of problog_project's own
+# _polygon_edges/_edge_crosses/_inside_polygon/_signed_polygon_area.
 # =====================================================================
-def _voronoi_sites(obstacles):
-    """Points evenly sampled around every obstacle's own circle -- the
-    circle analogue of problog_project's own per-polygon-edge boundary
-    sampling."""
+def _polygon_edges(points):
+    closed = list(points) + [points[0]]
+    return list(zip(closed[:-1], closed[1:]))
+
+
+def _edge_crosses(px, py, ax, ay, bx, by):
+    if (ay > py and by <= py) or (by > py and ay <= py):
+        x_cross = ax + (py - ay) / (by - ay) * (bx - ax)
+        return px < x_cross
+    return False
+
+
+def _inside_polygon(px, py, points):
+    count = sum(1 for (ax, ay), (bx, by) in _polygon_edges(points)
+                if _edge_crosses(px, py, ax, ay, bx, by))
+    return count % 2 == 1
+
+
+def _signed_polygon_area(points):
+    return sum(ax * by - bx * ay for (ax, ay), (bx, by) in _polygon_edges(points)) / 2.0
+
+
+# =====================================================================
+# FOLLOW_BOARDER -- byte-for-byte port of problog_project's own
+# _offset_boundary_clockwise/_follow_boarder_control_points, taking
+# `obstacle_polygons` as a parameter (problog_project's own module-level
+# _OBSTACLE_POLYGONS, loaded once from a file, has no equivalent here --
+# see module docstring).
+# =====================================================================
+def _offset_boundary_clockwise(polygon, offset):
+    """Dense samples along `polygon`'s own boundary, each pushed
+    outward by `offset` along its own edge's outward normal -- see
+    problog_project/module/theory/planners.py's own docstring for the
+    full rationale (per-edge offset, not a true mitred polygon offset;
+    outward direction picked empirically per edge, robust to either
+    winding). Unchanged from there."""
+    vertices = list(polygon)
+    if _signed_polygon_area(vertices) > 0.0:
+        vertices = list(reversed(vertices))
+
+    samples = []
+    for (ax, ay), (bx, by) in _polygon_edges(vertices):
+        edx, edy = bx - ax, by - ay
+        elen = math.hypot(edx, edy)
+        if elen <= 1.0e-9:
+            continue
+        edx, edy = edx / elen, edy / elen
+        n1 = (-edy, edx)
+        n2 = (edy, -edx)
+        mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+        probe_x, probe_y = mx + n1[0] * _NORMAL_PROBE_EPS, my + n1[1] * _NORMAL_PROBE_EPS
+        outward = n1 if not _inside_polygon(probe_x, probe_y, vertices) else n2
+        for k in range(_BOUNDARY_SAMPLES_PER_EDGE):
+            frac = k / _BOUNDARY_SAMPLES_PER_EDGE
+            px, py = ax + edx * elen * frac, ay + edy * elen * frac
+            samples.append((px + outward[0] * offset, py + outward[1] * offset))
+    return samples
+
+
+def _follow_boarder_control_points(sx, sy, obstacle_id, offset, obstacle_polygons):
+    """Core computation -- unchanged from problog_project's own function
+    of the same name, except obstacle_polygons arrives as a parameter
+    instead of a module-level global (see module docstring)."""
+    polygon = None
+    for oid, pts in obstacle_polygons:
+        if oid == obstacle_id:
+            polygon = pts
+            break
+    if polygon is None or len(polygon) < 3:
+        return None
+
+    boundary = _offset_boundary_clockwise(polygon, offset)
+    if not boundary:
+        return None
+
+    n = len(boundary)
+    start_idx = min(range(n),
+                     key=lambda i: (boundary[i][0] - sx) ** 2 + (boundary[i][1] - sy) ** 2)
+    path_xy = [(sx, sy)] + [boundary[(start_idx + i) % n] for i in range(n + 1)]
+
+    try:
+        tck, _u = fit_spline(path_xy, degree=3, smoothing=0.0)
+        control_points, _k = bspline_to_bezier_chain(tck)
+    except ValueError:
+        control_points = straight_control_points(sx, sy, path_xy[-1][0], path_xy[-1][1])
+
+    return control_points
+
+
+def follow_boarder_points(sx, sy, obstacle_id, offset, obstacle_polygons):
+    """Traces a full clockwise loop around `obstacle_id`'s own boundary,
+    offset outward by `offset`, starting and ending at whichever sample
+    is nearest the robot's current position -- byte-for-byte port of
+    problog_project's own follow_boarder_points (same "no stopping
+    condition of its own" contract: which Bug variant a leg implements
+    is entirely the subsequent MoveTo leg's own triggers, not this
+    planner's decision). `obstacle_polygons` is a
+    [(id, [(x,y), ...]), ...] list -- see obstacles_to_polygons above
+    for building one from this simulation's circular trees. Returns
+    None if obstacle_id names no known obstacle."""
+    return _follow_boarder_control_points(
+        float(sx), float(sy), str(obstacle_id), float(offset), obstacle_polygons)
+
+
+# =====================================================================
+# VORONOI -- byte-for-byte port of problog_project's own
+# _voronoi_sites/_segment_crosses_any_obstacle/_voronoi_roadmap_edges/
+# _insert_point_into_roadmap/_dijkstra_shortest_path/
+# _voronoi_control_points, taking `obstacle_polygons` as a parameter.
+# =====================================================================
+def _voronoi_sites(obstacle_polygons):
+    """Dense points sampled along every obstacle polygon's own boundary
+    -- unchanged from problog_project's own function of the same name."""
     sites = []
-    for obstacle in obstacles:
-        for k in range(_VORONOI_SAMPLES_PER_TREE):
-            angle = 2.0 * math.pi * k / _VORONOI_SAMPLES_PER_TREE
-            sites.append((obstacle.x + obstacle.radius * math.cos(angle),
-                          obstacle.y + obstacle.radius * math.sin(angle)))
+    for _oid, poly in obstacle_polygons:
+        for (ax, ay), (bx, by) in _polygon_edges(poly):
+            for k in range(_VORONOI_SAMPLES_PER_EDGE):
+                frac = k / _VORONOI_SAMPLES_PER_EDGE
+                sites.append((ax + (bx - ax) * frac, ay + (by - ay) * frac))
     return sites
 
 
-def _segment_crosses_any_obstacle(ax, ay, bx, by, obstacles):
-    """True iff the segment (ax,ay)-(bx,by) passes through ANY
-    obstacle's own circle -- the filter that turns a plain Voronoi
-    tessellation into a free-space roadmap."""
-    return any(segment_intersects_circle(ax, ay, bx, by, o.x, o.y, o.radius)
-               for o in obstacles)
+def _segment_crosses_any_obstacle(ax, ay, bx, by, obstacle_polygons):
+    """Unchanged from problog_project's own function of the same name."""
+    for k in range(_VORONOI_EDGE_CHECK_SAMPLES + 1):
+        frac = k / _VORONOI_EDGE_CHECK_SAMPLES
+        x, y = ax + (bx - ax) * frac, ay + (by - ay) * frac
+        for _oid, poly in obstacle_polygons:
+            if _inside_polygon(x, y, poly):
+                return True
+    return False
 
 
 def _closest_point_on_segment(px, py, ax, ay, bx, by):
@@ -339,11 +489,12 @@ def _closest_point_on_segment(px, py, ax, ay, bx, by):
     return ax + t * sdx, ay + t * sdy
 
 
-def _voronoi_roadmap_edges(obstacles):
+def _voronoi_roadmap_edges(obstacle_polygons):
     """[(p1,p2), ...] -- every Voronoi ridge between two finite vertices
     whose connecting segment doesn't cross any obstacle. Returns None if
-    there are too few sites to build a diagram at all."""
-    sites = _voronoi_sites(obstacles)
+    there are too few sites to build a diagram at all. Unchanged from
+    problog_project's own function of the same name."""
+    sites = _voronoi_sites(obstacle_polygons)
     if len(sites) < 4:
         return None
     try:
@@ -357,7 +508,7 @@ def _voronoi_roadmap_edges(obstacles):
             continue
         p1 = tuple(vor.vertices[v1])
         p2 = tuple(vor.vertices[v2])
-        if _segment_crosses_any_obstacle(p1[0], p1[1], p2[0], p2[1], obstacles):
+        if _segment_crosses_any_obstacle(p1[0], p1[1], p2[0], p2[1], obstacle_polygons):
             continue
         edges.append((p1, p2))
     return edges
@@ -419,14 +570,12 @@ def _dijkstra_shortest_path(edges, start, goal):
     return path
 
 
-def plan_voronoi_points(sx, sy, gx, gy, obstacles):
-    """Generalized-Voronoi-diagram planner over `obstacles`. Degrades to
-    a straight line when there are too few obstacles to route around;
-    returns None only if a roadmap exists but start/goal are genuinely
-    disconnected within it."""
-    sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
-    start, goal = (sx, sy), (gx, gy)
-    edges = _voronoi_roadmap_edges(obstacles)
+def _voronoi_control_points(sx, sy, gx, gy, obstacle_polygons):
+    """Core computation -- unchanged from problog_project's own function
+    of the same name."""
+    start = (sx, sy)
+    goal = (gx, gy)
+    edges = _voronoi_roadmap_edges(obstacle_polygons)
     if not edges:
         return straight_control_points(sx, sy, gx, gy)
 
@@ -437,43 +586,24 @@ def plan_voronoi_points(sx, sy, gx, gy, obstacles):
     if path is None:
         return None
 
-    return _fit_or_straight(path, sx, sy, gx, gy)
+    if len(path) < 2:
+        return [(sx, sy)] * 4
+    try:
+        tck, _u = fit_spline(path, degree=3, smoothing=0.0)
+        control_points, _k = bspline_to_bezier_chain(tck)
+    except ValueError:
+        control_points = straight_control_points(sx, sy, gx, gy)
+
+    return control_points
 
 
-# =====================================================================
-# FOLLOW_BOARDER -- a concentric offset circle, sampled clockwise
-# starting nearest the robot's own position, replaces
-# problog_project's own per-edge outward-normal boundary offset (see
-# module docstring for why the circular case needs no such machinery).
-# =====================================================================
-_FOLLOW_BOARDER_SAMPLES = 24
-
-
-def follow_boarder_points(sx, sy, obstacle_id, offset, obstacles):
-    """Traces a full clockwise loop around `obstacle_id`'s own canopy,
-    offset outward by `offset`, starting and ending at whichever sample
-    is nearest the robot's current position -- same "no stopping
-    condition of its own" contract as problog_project's
-    follow_boarder_points (see that function's own docstring: which Bug
-    variant a leg implements is entirely the subsequent MoveTo leg's own
-    triggers, not this planner's decision). Returns None if obstacle_id
-    names no known tree."""
-    sx, sy, offset = float(sx), float(sy), float(offset)
-    obstacle = next((o for o in obstacles if o.id == obstacle_id), None)
-    if obstacle is None:
-        return None
-
-    radius = obstacle.radius + offset
-    n = _FOLLOW_BOARDER_SAMPLES
-    # Angle from the tree's own center to the robot decides where the
-    # loop starts; walking DECREASING angle traces the circle clockwise
-    # in a standard x-right/y-up frame.
-    start_angle = math.atan2(sy - obstacle.y, sx - obstacle.x)
-    boundary = [
-        (obstacle.x + radius * math.cos(start_angle - 2.0 * math.pi * k / n),
-         obstacle.y + radius * math.sin(start_angle - 2.0 * math.pi * k / n))
-        for k in range(n + 1)
-    ]
-    path_xy = [(sx, sy)] + boundary
-
-    return _fit_or_straight(path_xy, sx, sy, boundary[-1][0], boundary[-1][1])
+def plan_voronoi_points(sx, sy, gx, gy, obstacle_polygons):
+    """Generalized-Voronoi-diagram planner over `obstacle_polygons` (a
+    [(id, [(x,y), ...]), ...] list -- see obstacles_to_polygons above
+    for building one from this simulation's circular trees). Degrades
+    to a straight line when there are too few obstacles to route
+    around; returns None only if a roadmap exists but start/goal are
+    genuinely disconnected within it. Byte-for-byte port of
+    problog_project's own plan_voronoi_points."""
+    return _voronoi_control_points(
+        float(sx), float(sy), float(gx), float(gy), obstacle_polygons)

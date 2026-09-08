@@ -39,7 +39,30 @@ def generate_launch_description():
         DeclareLaunchArgument("base_frame", default_value="base_link"),
         DeclareLaunchArgument("battery_topic", default_value="battery_state"),
         DeclareLaunchArgument("odom_topic", default_value="odometry/filtered/local"),
+        DeclareLaunchArgument("map_topic", default_value="orchard/occupancy_grid"),
+        DeclareLaunchArgument(
+            "map_resolution", default_value="0.25",
+            description="Metres per cell of the whole-orchard occupancy "
+            "grid orchard_map_node builds once at startup."),
+        DeclareLaunchArgument("map_margin", default_value="5.0"),
 
+        Node(
+            package="amiga_ros2_planners",
+            executable="orchard_map",
+            name="orchard_map_node",
+            namespace=namespace,
+            output="screen",
+            parameters=[{
+                "orchard_topic": LaunchConfiguration("orchard_topic"),
+                "datum_lat": LaunchConfiguration("datum_lat"),
+                "datum_lon": LaunchConfiguration("datum_lon"),
+                "tree_obstacle_radius": LaunchConfiguration("tree_obstacle_radius"),
+                "map_topic": LaunchConfiguration("map_topic"),
+                "map_frame": LaunchConfiguration("reference_frame"),
+                "resolution": LaunchConfiguration("map_resolution"),
+                "margin": LaunchConfiguration("map_margin"),
+            }],
+        ),
         Node(
             package="amiga_ros2_planners",
             executable="plan_service",
@@ -53,6 +76,7 @@ def generate_launch_description():
                 "tree_obstacle_radius": LaunchConfiguration("tree_obstacle_radius"),
                 "reference_frame": LaunchConfiguration("reference_frame"),
                 "base_frame": LaunchConfiguration("base_frame"),
+                "map_topic": LaunchConfiguration("map_topic"),
             }],
         ),
         Node(
