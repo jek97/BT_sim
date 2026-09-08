@@ -22,6 +22,18 @@ RUN apt-get update && apt-get install -y git wget curl python3-full python3-pip 
     rhash librhash-dev \
     byacc flex
 
+# Upstream regression in the humble build of ros-humble-behaviortree-cpp: it
+# installs libbehaviortree_cpp.so* into the multiarch lib dir
+# (lib/<arch>-linux-gnu), but its own ament export's find_library() call has
+# no LIBRARY_DIRS and only searches the flat lib/, so find_package() for it
+# fails downstream (behaviortree_ros2 and this repo's amiga_ros2_behavior_tree
+# both hit this). Safe once upstream fixes this -- the glob matches nothing
+# and the symlink step is a no-op. Same fix as scripts/ci/build_underlay.sh.
+RUN arch_lib="/opt/ros/${ROS_DISTRO}/lib/$(uname -m)-linux-gnu" && \
+    if compgen -G "$arch_lib"/libbehaviortree_cpp*.so* > /dev/null; then \
+        ln -sf "$arch_lib"/libbehaviortree_cpp*.so* "/opt/ros/${ROS_DISTRO}/lib/"; \
+    fi
+
 # The SPIN model checker, used by amiga_ros2_agents/verification/verify.py to re-verify a
 # replanned mission. Same script CI runs, so both environments get the same
 # checker; see the header there for why it is a source build.
