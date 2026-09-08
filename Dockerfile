@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y git wget curl python3-full python3-pip 
     ros-${ROS_DISTRO}-foxglove-bridge ros-${ROS_DISTRO}-depthai-ros \
     ros-${ROS_DISTRO}-behaviortree-cpp ros-${ROS_DISTRO}-generate-parameter-library \
     ros-${ROS_DISTRO}-tf-transformations \
+    ros-${ROS_DISTRO}-navigation2 ros-${ROS_DISTRO}-nav2-bringup \
     ros-${ROS_DISTRO}-ros-gz ros-${ROS_DISTRO}-ign-ros2-control \
     ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-diff-drive-controller \
     ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-joint-state-broadcaster \
