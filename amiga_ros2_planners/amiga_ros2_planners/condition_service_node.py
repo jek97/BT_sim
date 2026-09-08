@@ -42,9 +42,18 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 
 from amiga_interfaces.srv import EvaluateCondition
+from amiga_ros2_planners.frame_transform import ProblogFrameTransform
 from amiga_ros2_planners.geometry import nearest_obstacle, line_of_sight_clear
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
 from amiga_ros2_planners.pose import PoseProvider
+
+# Conditions whose goal_x/goal_y is a point to transform from a
+# problog_project problem's own map frame -- see frame_transform.py's
+# own docstring. Battery*/ObstacleInBound/ObstacleOnPath don't take a
+# goal point at all, so they're left out on purpose.
+_GOAL_FRAME_CONDITIONS = frozenset({
+    "DistanceBelow", "DistanceEqual", "DistanceOver", "LineOfSightClear",
+})
 
 
 class ConditionServiceNode(Node):
@@ -60,6 +69,19 @@ class ConditionServiceNode(Node):
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("equal_tolerance_m", 0.1)
         self.declare_parameter("equal_tolerance_pct", 1.0)
+        # Identity by default -- MUST match plan_service_node's own
+        # problog_frame_origin_x/y/yaw_deg params, or a DistanceBelow
+        # checked against the "same" goal PlanWith just targeted would
+        # silently disagree with it. See frame_transform.py.
+        self.declare_parameter("problog_frame_origin_x", 0.0)
+        self.declare_parameter("problog_frame_origin_y", 0.0)
+        self.declare_parameter("problog_frame_yaw_deg", 0.0)
+
+        self._goal_transform = ProblogFrameTransform(
+            self.get_parameter("problog_frame_origin_x").value,
+            self.get_parameter("problog_frame_origin_y").value,
+            self.get_parameter("problog_frame_yaw_deg").value,
+        )
 
         self._obstacles = OrchardObstacleStore(
             self,
@@ -226,6 +248,9 @@ class ConditionServiceNode(Node):
         if handler is None:
             response.reason = f"unknown_condition({request.condition})"
             return response
+        if request.condition in _GOAL_FRAME_CONDITIONS:
+            request.goal_x, request.goal_y = self._goal_transform.to_sim_frame(
+                request.goal_x, request.goal_y)
         return handler(request, response)
 
 

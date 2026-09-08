@@ -56,6 +56,35 @@ planner, or `scripts/demo_llm_auction.sh`) to exercise that path.
 > pipeline more secure. You can edit the `bt_runner` node however you see fit
 > for BT.CPP support.
 
+## problog_project-ported nodes
+
+`PlanWith`, `MoveTo`, and every Condition except `HaltedWith`
+(`DistanceBelow/Equal/Over`, `ObstacleInBound`/`ObstacleOnPath`,
+`BatteryBelow/Equal/Over`, `LineOfSightClear`) are registered in `bt.cpp`
+(`src/actions/plan_with.cpp`, `move_to.cpp`, `evaluate_condition_base.cpp`,
+`evaluate_conditions.cpp`) as thin `BT::RosServiceNode`/`BT::RosActionNode`
+leaves dialing the ROS2 service/action backends in the sibling
+`amiga_ros2_planners` package — see that package's own README for what
+each one actually does (it ports `problog_project`'s own planning/
+condition logic onto this simulation's orchard and tf2 pose) and for
+known limitations. To run a mission using them, point `bt_runner` at
+that package's extended schema instead of this one:
+```bash
+ros2 launch amiga_ros2_behavior_tree bt.launch.py \
+    mission_schema:=$(ros2 pkg prefix amiga_ros2_planners)/share/amiga_ros2_planners/schemas/amiga_btcpp_planners.xsd
+```
+(`amiga_ros2_planners/launch/problog_sim_bringup.launch.py` brings up
+everything needed at once, schema included, for a single robot.)
+
+**These leaves have not been compiled or run in this session** — no
+ROS2/`behaviortree_ros2` toolchain was available to build against.
+They're written to match this file's own existing
+`BT::RosActionNode`/`RosServiceNode` leaves exactly (see e.g.
+`move_to_gps_location.cpp`) and the stable, documented
+BehaviorTree.ROS2 API (`setRequest`/`onResponseReceived`/`onFailure` for
+services, `setGoal`/`onResultReceived`/`onFeedback` for actions), but
+should be built and smoke-tested before you rely on them.
+
 ## Action mocks
 
 For testing tree designs without real navigation/arm/perception behind them:

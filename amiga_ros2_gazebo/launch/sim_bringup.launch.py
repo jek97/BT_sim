@@ -156,6 +156,7 @@ def launch_setup(context, *args, **kwargs):
     launch_rviz = LaunchConfiguration("launch_rviz")
     yaw_offset = LaunchConfiguration("yaw_offset")
     mission_port_base = int(LaunchConfiguration("mission_port_base").perform(context))
+    mission_schema = LaunchConfiguration("mission_schema")
 
     launch_nav = LaunchConfiguration("launch_nav").perform(context).lower() == "true"
     launch_arm = LaunchConfiguration("launch_arm").perform(context).lower() == "true"
@@ -424,6 +425,7 @@ def launch_setup(context, *args, **kwargs):
                     "bt.launch.py",
                     namespace=ns,
                     port=str(mission_port_base + i - 1),
+                    mission_schema=mission_schema,
                 )
             )
 
@@ -503,6 +505,17 @@ def generate_launch_description():
                 description="Start waypoint_follower + linear_velo (as in tmux bringup)",
             ),
             DeclareLaunchArgument("launch_bt", default_value="true"),
+            DeclareLaunchArgument(
+                "mission_schema",
+                default_value=os.path.join(
+                    get_package_share_directory("amiga_ros2_behavior_tree"),
+                    "schemas", "amiga_btcpp.xsd",
+                ),
+                description="Forwarded to bt.launch.py's own mission_schema "
+                "arg for every robot -- point this at "
+                "amiga_ros2_planners' amiga_btcpp_planners.xsd for a "
+                "mission using PlanWith/MoveTo/the ported conditions.",
+            ),
             DeclareLaunchArgument(
                 "broken_sampler_robot",
                 default_value="0",

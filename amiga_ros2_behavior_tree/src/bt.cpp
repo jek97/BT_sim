@@ -21,6 +21,9 @@
 #include "amiga_ros2_behavior_tree/actions/sample_leaf.hpp"
 #include "amiga_ros2_behavior_tree/actions/follow_person.hpp"
 #include "amiga_ros2_behavior_tree/actions/arm_move_to.hpp"
+#include "amiga_ros2_behavior_tree/actions/plan_with.hpp"
+#include "amiga_ros2_behavior_tree/actions/move_to.hpp"
+#include "amiga_ros2_behavior_tree/actions/evaluate_conditions.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -73,6 +76,24 @@ int main(int argc, char **argv) {
   // conditional nodes
   factory.registerNodeType<AssertTrue>("AssertTrue");
   factory.registerNodeType<CheckValue>("CheckValue");
+
+  // problog_project-ported nodes -- ROS2 service/action backends in
+  // amiga_ros2_planners (plan_service_node/move_to_node/
+  // condition_service_node); see that package's own README for what
+  // each one does and doesn't carry over from problog_project's own
+  // semantics. HaltedWith has no leaf here on purpose -- see
+  // evaluate_condition_base.hpp's own header.
+  factory.registerNodeType<PlanWith>("PlanWith", ros_params);
+  factory.registerNodeType<MoveTo>("MoveTo", ros_params);
+  factory.registerNodeType<DistanceBelow>("DistanceBelow", ros_params);
+  factory.registerNodeType<DistanceEqual>("DistanceEqual", ros_params);
+  factory.registerNodeType<DistanceOver>("DistanceOver", ros_params);
+  factory.registerNodeType<ObstacleInBound>("ObstacleInBound", ros_params);
+  factory.registerNodeType<ObstacleOnPath>("ObstacleOnPath", ros_params);
+  factory.registerNodeType<BatteryBelow>("BatteryBelow", ros_params);
+  factory.registerNodeType<BatteryEqual>("BatteryEqual", ros_params);
+  factory.registerNodeType<BatteryOver>("BatteryOver", ros_params);
+  factory.registerNodeType<LineOfSightClear>("LineOfSightClear", ros_params);
 
   std::string schema_path;
   try {

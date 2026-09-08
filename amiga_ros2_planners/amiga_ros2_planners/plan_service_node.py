@@ -42,6 +42,7 @@ from nav_msgs.msg import OccupancyGrid
 
 from amiga_interfaces.srv import PlanPath
 from amiga_ros2_planners import planning_core
+from amiga_ros2_planners.frame_transform import ProblogFrameTransform
 from amiga_ros2_planners.orchard_map import occupancy_grid_msg_to_grid
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
 from amiga_ros2_planners.pose import PoseProvider
@@ -61,6 +62,19 @@ class PlanServiceNode(Node):
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("map_topic", "orchard/occupancy_grid")
+        # Identity by default -- see frame_transform.py's own docstring.
+        # Set these to align a problog_project mission's own goal points
+        # (authored in that problem's map.yaml frame) with this
+        # simulation's live orchard/tf2 frame.
+        self.declare_parameter("problog_frame_origin_x", 0.0)
+        self.declare_parameter("problog_frame_origin_y", 0.0)
+        self.declare_parameter("problog_frame_yaw_deg", 0.0)
+
+        self._goal_transform = ProblogFrameTransform(
+            self.get_parameter("problog_frame_origin_x").value,
+            self.get_parameter("problog_frame_origin_y").value,
+            self.get_parameter("problog_frame_yaw_deg").value,
+        )
 
         self._obstacles = OrchardObstacleStore(
             self,
@@ -98,29 +112,48 @@ class PlanServiceNode(Node):
             return response
         sx, sy = xy
         obstacles = self._obstacles.get_obstacles()
+        # Every algorithm below except follow_boarder takes a goal point,
+        # which may be authored in a problog_project problem's own map
+        # frame -- see frame_transform.py's own docstring. Identity
+        # (default params) makes this a no-op for a mission already
+        # authored against this sim's own frame.
+        goal_x, goal_y = self._goal_transform.to_sim_frame(
+            request.goal_x, request.goal_y)
 
         algorithm = request.algorithm
         if algorithm == "astar":
             if self._static_grid is not None:
                 control_points = planning_core.plan_astar_points(
-                    sx, sy, request.goal_x, request.goal_y, grid=self._static_grid)
+                    sx, sy, goal_x, goal_y, grid=self._static_grid)
             else:
                 self.get_logger().warn(
                     "no orchard map received yet from orchard_map_node -- "
                     "falling back to a query-scoped grid")
                 control_points = planning_core.plan_astar_points(
-                    sx, sy, request.goal_x, request.goal_y, obstacles=obstacles)
+                    sx, sy, goal_x, goal_y, obstacles=obstacles)
         elif algorithm == "straight":
             control_points = planning_core.straight_control_points(
-                sx, sy, request.goal_x, request.goal_y)
+                sx, sy, goal_x, goal_y)
         elif algorithm == "voronoi":
             obstacle_polygons = planning_core.obstacles_to_polygons(obstacles)
             control_points = planning_core.plan_voronoi_points(
-                sx, sy, request.goal_x, request.goal_y, obstacle_polygons)
+                sx, sy, goal_x, goal_y, obstacle_polygons)
         elif algorithm == "follow_boarder":
+            # Resolved through OrchardObstacleStore's own lenient lookup
+            # (exact id, falling back to a bare tree-index match) BEFORE
+            # building the polygon list, so a problog_project tree's own
+            # obstacle_id (e.g. "obs5", meaning nothing to this orchard)
+            # still resolves to "tree_5" here -- see
+            # OrchardObstacleStore.get_obstacle's own docstring for why.
+            resolved = self._obstacles.get_obstacle(request.obstacle_id)
+            if resolved is None:
+                response.control_points = []
+                response.reason = "no_obstacle"
+                response.status = False
+                return response
             obstacle_polygons = planning_core.obstacles_to_polygons(obstacles)
             control_points = planning_core.follow_boarder_points(
-                sx, sy, request.obstacle_id, request.offset, obstacle_polygons)
+                sx, sy, resolved.id, request.offset, obstacle_polygons)
         else:
             response.control_points = []
             response.reason = f"unknown_algorithm({algorithm})"

@@ -55,6 +55,15 @@ def generate_launch_description():
             description="Nav2 controller plugin id to request (empty = "
             "controller_server's own default)."),
         DeclareLaunchArgument("samples_per_segment", default_value="10"),
+        DeclareLaunchArgument(
+            "problog_frame_origin_x", default_value="0.0",
+            description="Where a problog_project problem's own map "
+            "origin sits in this sim's frame (identity: goal points are "
+            "already in this sim's own frame). Shared by plan_service "
+            "and condition_service so a goal PlanWith targets and the "
+            "same goal a DistanceBelow checks against always agree."),
+        DeclareLaunchArgument("problog_frame_origin_y", default_value="0.0"),
+        DeclareLaunchArgument("problog_frame_yaw_deg", default_value="0.0"),
 
         Node(
             package="amiga_ros2_planners",
@@ -87,6 +96,9 @@ def generate_launch_description():
                 "reference_frame": LaunchConfiguration("reference_frame"),
                 "base_frame": LaunchConfiguration("base_frame"),
                 "map_topic": LaunchConfiguration("map_topic"),
+                "problog_frame_origin_x": LaunchConfiguration("problog_frame_origin_x"),
+                "problog_frame_origin_y": LaunchConfiguration("problog_frame_origin_y"),
+                "problog_frame_yaw_deg": LaunchConfiguration("problog_frame_yaw_deg"),
             }],
         ),
         Node(
@@ -103,6 +115,9 @@ def generate_launch_description():
                 "reference_frame": LaunchConfiguration("reference_frame"),
                 "base_frame": LaunchConfiguration("base_frame"),
                 "battery_topic": LaunchConfiguration("battery_topic"),
+                "problog_frame_origin_x": LaunchConfiguration("problog_frame_origin_x"),
+                "problog_frame_origin_y": LaunchConfiguration("problog_frame_origin_y"),
+                "problog_frame_yaw_deg": LaunchConfiguration("problog_frame_yaw_deg"),
             }],
         ),
         Node(

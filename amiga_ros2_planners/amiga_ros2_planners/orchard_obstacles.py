@@ -20,7 +20,7 @@ import json
 from std_msgs.msg import String
 
 from amiga_ros2_planners.gps import latlon_to_local
-from amiga_ros2_planners.obstacle_types import Obstacle
+from amiga_ros2_planners.obstacle_types import Obstacle, resolve_obstacle_id
 
 
 class OrchardObstacleStore:
@@ -83,4 +83,7 @@ class OrchardObstacleStore:
         return obstacles
 
     def get_obstacle(self, obstacle_id):
-        return next((o for o in self.get_obstacles() if o.id == obstacle_id), None)
+        """See obstacle_types.resolve_obstacle_id for the actual
+        resolution logic (exact id match, falling back to a bare
+        tree-index match) -- kept there so it's testable without ROS."""
+        return resolve_obstacle_id(self.get_obstacles(), obstacle_id)

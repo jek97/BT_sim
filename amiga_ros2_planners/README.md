@@ -9,10 +9,12 @@ static `map.pgm`/`obstacles_generated.pl`) and this robot's own tf2 pose
 and every Condition except `HaltedWith` as ROS2 services/actions for a
 future BT.cpp leaf to call.
 
-This package does **not** register any BT.cpp leaf node in
-`amiga_ros2_behavior_tree`, and `MoveTo`'s own `FollowPath` wiring has not
-been exercised against a live Nav2 stack. It is the backend layer
-underneath a BT.cpp tree — see "Known limitations / what's next" below.
+The corresponding BT.cpp leaves are now registered in
+`amiga_ros2_behavior_tree/src/bt.cpp` (see that package's own README),
+but **have not been compiled or run** — no ROS2/`behaviortree_ros2`
+toolchain was available in this session — and `MoveTo`'s own
+`FollowPath` wiring has not been exercised against a live Nav2 stack
+either. See "Known limitations / what's next" below.
 
 ## What's in here
 
@@ -36,6 +38,10 @@ underneath a BT.cpp tree — see "Known limitations / what's next" below.
 | `scripts/export_orchard_map.py` | new | Standalone (no ROS2 needed), extracts a real orchard from a checked-in mission fixture and writes a `map.pgm`/`map.yaml` pair — see "Saved orchard map instance" below. |
 | `scripts/adapt_problog_tree.py` | new | Standalone, adapts a `problog_project` tree's root element to this repo's own convention — see "Running a problog_project BT" below. |
 | `maps/orchard_map.pgm`, `maps/orchard_map.yaml`, `maps/orchard_map_trees.json` | new (checked in) | A saved instance of the real 144-tree orchard, in `problog_project`'s own `map.yaml` format — see below. |
+| `amiga_ros2_planners/frame_transform.py` | new | Maps a goal point from a `problog_project` problem's own map frame into this sim's live frame — see "Goal-point frame alignment" below. |
+| `amiga_ros2_planners/obstacle_types.py`'s `resolve_obstacle_id` | new | Resolves an obstacle id against this orchard's own tree ids, falling back to a bare tree-index match (`"obs5"`/`"5"` → `tree_5`) — see "Resolving obstacle ids against tree ids" below. |
+| `amiga_ros2_planners/launch/problog_sim_bringup.launch.py` | new | One command bringing up Gazebo + Nav2 + `bt.launch.py` (pointed at this package's schema) + every node in `planners.launch.py`, for a single robot — see checklist item 7 below. |
+| `amiga_ros2_behavior_tree/src/actions/plan_with.{hpp,cpp}`, `move_to.{hpp,cpp}`, `evaluate_condition_base.{hpp,cpp}`, `evaluate_conditions.{hpp,cpp}`, `point_port.hpp` | new | The BT.cpp leaves themselves, registered in `bt.cpp` — see that package's own README for their current (untested) status. |
 
 ## Running it
 
@@ -133,6 +139,75 @@ python3 scripts/export_orchard_map.py \
     --out maps --map-name orchard_map --resolution 0.1
 ```
 
+## Goal-point frame alignment
+
+Yes — `frame_transform.py`'s `ProblogFrameTransform` maps a goal point
+authored in a `problog_project` problem's own map frame into this
+sim's live frame. It's a plain 2D rigid transform (translate by
+`problog_frame_origin_x`/`_y`, rotate by `problog_frame_yaw_deg`), not a
+tf2 lookup: both frames are static for a run's whole lifetime (no robot
+ever moves "the problog map"), so a fixed, once-calibrated offset is all
+there is to it. `plan_service_node`/`condition_service_node` both apply
+it to every `goal_x`/`goal_y` they receive (for `astar`/`straight`/
+`voronoi` and for `DistanceBelow`/`Equal`/`Over`/`LineOfSightClear`
+respectively) — identity by default (params default to `0.0`), so a
+mission already authored against this sim's own orchard is unaffected.
+
+**To calibrate it**: locate one shared physical landmark — or just the
+robot's own start pose — in both the problem's map (`config.yaml`'s own
+`start_x`/`start_y`, or `maps/orchard_map.yaml`'s `origin:` if you used
+"Saved orchard map instance" below) and this sim's live frame (read the
+robot's own tf2 `map`→`base_link` transform at that same physical spot),
+then set `problog_frame_origin_x`/`_y` to where the problog map's own
+`(0,0)` sits in this sim's frame, and `problog_frame_yaw_deg` to the
+rotation between the two. **Both nodes' params must agree** — a launch
+file passing the same three values to both (as `planners.launch.py`
+already does) is the way to guarantee that, rather than setting them
+node-by-node with `ros2 param set`.
+
+## Resolving obstacle ids against tree ids
+
+Yes — `orchard_obstacles.py`'s `get_obstacle` (via
+`obstacle_types.resolve_obstacle_id`) tries an exact id match first
+(this simulation's own `tree_<tree_index>` convention), then falls back
+to extracting the first run of digits from whatever id it was given and
+matching that against a tree_index. So a `problog_project` tree's own
+`obstacle_id="obs5"` (meaningless here — `obs5` names a hand-authored
+polygon in that problem's own `obstacles_generated.pl`, not anything
+this orchard has) resolves to `tree_5` anyway, on the working assumption
+that "obstacle number 5" is what was meant and this orchard's own
+numbering is the only one that actually exists at runtime. A bare `"5"`
+resolves the same way, and an already-correct `"tree_5"` matches
+exactly without ever touching the fallback. Both `follow_boarder`
+(`plan_service_node`) and `LineOfSightClear` (`condition_service_node`)
+go through this resolution, so checklist item 4 below is now handled
+automatically for any tree using the `obsN`/bare-number convention —
+only a genuinely different naming scheme would still need remapping.
+
+## Is battery drain action-dependent?
+
+It already is, correctly — but through motion, not through which BT
+node happens to be ticking, which is the more faithful choice:
+`problog_project`'s own `config.yaml` only ever models TWO drain rates,
+`idle_drain_rate` and `moving_drain_rate` — it has no notion of
+per-action rates at all, only "is the base currently walking a spline or
+not." `battery_sim_node` mirrors exactly that: it watches the robot's
+own `odometry/filtered/local` speed and switches between
+`idle_drain_rate_pct_s`/`moving_drain_rate_pct_s` accordingly. This
+already produces the right behavior with zero action-awareness: a
+`MoveTo` leg driving real `cmd_vel` through `FollowPath` drains at the
+moving rate; `PlanWith` (instantaneous, no motion) and `SampleLeaf`
+(stationary) drain at the idle rate; even a `MoveTo` that stalls for
+some reason correctly falls back to the idle rate, which an
+action-identity-based rule would miss entirely. The one thing this
+doesn't (and, per `problog_project`'s own model, shouldn't need to)
+account for is the Kinova arm's own motion during
+`MoveArmToPosition` — arm movement never appears in `problog_project`'s
+theory at all, so `battery_sim_node` not distinguishing it is consistent
+with the model being ported, not a gap in porting it. Say if you want a
+separate arm-motion drain rate added on top; it isn't part of the
+ported model as it stands.
+
 ## Running a `problog_project` BT in this simulation — checklist
 
 Given one of `BT_project/problems/<name>/behavior_tree.xml`, here's
@@ -156,52 +231,61 @@ everything between it and actually ticking in `bt_runner`:
    puts a bare `<ReactiveSequence>` there) — both now fixed in
    `amiga_btcpp_planners.xsd` for every tree, not just `problog_project`'s.
 
-2. **BT.cpp leaf registration — the largest remaining gap.** `PlanWith`,
-   `MoveTo`, and the eight implemented conditions have **ROS2
-   service/action backends** (this package) but **no C++ leaf node**
-   registered in `bt_runner`'s `BehaviorTreeFactory`. Until leaves like
-   `BT::RosServiceNode<PlanPath>` / `BT::RosActionNode<MoveTo>` are
-   written (following the exact pattern of every existing leaf in
-   `amiga_ros2_behavior_tree/src/actions/`) and added to `bt.cpp`'s own
-   `registerNodeType<...>()` calls, `bt_runner` will fail to build the
-   tree (`factory.createTreeFromText` throws "unknown node type") even
-   though the XML itself now validates. Nothing in this package does
-   this — it's the next concrete step, and hasn't been started.
+2. **BT.cpp leaf registration — done, but UNCOMPILED.** `PlanWith`,
+   `MoveTo`, and the nine implemented conditions are now registered in
+   `bt_runner`'s `BehaviorTreeFactory` (`amiga_ros2_behavior_tree/src/bt.cpp`,
+   backed by `src/actions/plan_with.cpp`/`move_to.cpp`/
+   `evaluate_condition_base.cpp`/`evaluate_conditions.cpp`). **This has
+   not been built** — no ROS2/`behaviortree_ros2` toolchain was available
+   in this session — so treat it as "should work, following this
+   package's own existing leaf patterns exactly," not "verified." Build
+   `amiga_ros2_behavior_tree` and fix whatever the compiler finds before
+   trusting it.
 
-3. **Goal points are in the wrong frame.** A `goal="11.675;11.525"`
-   value is expressed in that PROBLEM's own `map.yaml` frame (or,
-   equivalently, whatever frame you exported in "Saved orchard map
-   instance" above) — **not** this simulation's live orchard/tf2 frame.
-   Either re-express every goal point in this sim's own local (x,y) (the
-   same frame `plan_service_node`'s `datum_lat`/`datum_lon` establish),
-   or make sure the map you're testing against uses the SAME frame the
-   goal points were authored in.
+3. **Goal points, resolved automatically.** A `goal="11.675;11.525"`
+   value is authored in that PROBLEM's own map frame, not this
+   simulation's live orchard/tf2 frame — `plan_service_node`/
+   `condition_service_node` now apply `ProblogFrameTransform` to every
+   goal they receive, so once you've calibrated
+   `problog_frame_origin_x`/`_y`/`problog_frame_yaw_deg` (see "Goal-point
+   frame alignment" above) this is handled, not a manual rewrite of
+   every `goal="..."` in the tree.
 
-4. **`obstacle_id` values won't resolve.** `follow_boarder`/
+4. **`obstacle_id` values, resolved automatically.** `follow_boarder`/
    `LineOfSightClear` reference obstacle ids from that problem's own
-   `obstacles_generated.pl` (e.g. `obs5`). This simulation's own ids are
-   `tree_<tree_index>` (`orchard_obstacles.py`). Remap any such id before
-   running the tree, or the planner/condition will report
-   `no_obstacle`/`no_such_obstacle`.
+   `obstacles_generated.pl` (e.g. `obs5`) — `OrchardObstacleStore.get_obstacle`
+   now falls back to a bare tree-index match (see "Resolving obstacle
+   ids against tree ids" above), so this resolves to `tree_5`
+   automatically for the common `obsN`/bare-number conventions. Only a
+   genuinely different naming scheme would still need remapping.
 
 5. **`HaltedWith`** — if the tree uses it, it needs to be removed or
-   replaced: `amiga_btcpp_planners.xsd` now rejects it outright (per your
-   own instruction), and nothing implements it.
+   replaced: `amiga_btcpp_planners.xsd` rejects it outright, and nothing
+   implements it (see "Do we reason over a 3D map" section's sibling
+   note in `EvaluateCondition.srv` for why it's structurally excluded,
+   not just missing).
 
 6. **Battery is always live here**, unlike `problog_project`'s own
    per-problem `config.yaml` `battery.enabled` toggle — `battery_sim_node`
    always publishes a draining percentage, so `Battery*`
    conditions/triggers are always evaluable regardless of what that
-   problem's own config said. Harmless if the tree never checks battery;
-   worth noting if a problem was authored assuming `battery.enabled: false`.
+   problem's own config said (see "Is battery drain action-dependent"
+   above for why this already behaves correctly). Harmless if the tree
+   never checks battery; worth noting if a problem was authored assuming
+   `battery.enabled: false`.
 
-7. **Everything needs to actually be running**: this package's own
-   `planners.launch.py`, `amiga_ros2_behavior_tree`'s `bt.launch.py`
-   (pointed at `amiga_btcpp_planners.xsd` via `mission_schema:=...`),
-   Nav2's `controller_server` (for `MoveTo`), and a live localization
-   stack publishing tf2 (every planner/condition call resolves "current
-   position" from tf2, `problog_project`'s own `now/2 + at/4`
-   equivalent).
+7. **Everything running at once — now one command:**
+   ```bash
+   ros2 launch amiga_ros2_planners problog_sim_bringup.launch.py
+   ```
+   Brings up Gazebo + Nav2 (`launch_nav:=true`, for `MoveTo`'s own
+   `FollowPath` — see that launch file's own note on why this is Nav2's
+   full stack rather than a bespoke `controller_server`-only bringup) +
+   `bt.launch.py` (pointed at `amiga_btcpp_planners.xsd` by default) +
+   every node in `planners.launch.py`, single robot, all sharing the same
+   `datum_lat`/`_lon`/`problog_frame_*` params. See that file's own
+   header for what it does and does not include (`launch_coordination`/
+   `launch_agents` are off — this is a fleet-of-one test bench).
 
 ## The `MoveTo` → Nav2 `FollowPath` wrapper
 
@@ -251,10 +335,10 @@ thread makes it safe here, rather than a genuinely async rewrite).
 
 ## Known limitations / what's next
 
-- **No BT.cpp leaf nodes exist yet** for `PlanWith`/`MoveTo`/the eight
-  implemented conditions — see checklist item 2 above. This is now the
-  single largest gap between "backends exist" and "a `problog_project`
-  tree actually runs end to end in Gazebo."
+- **The C++ BT.cpp leaves are unbuilt** — see checklist item 2 above.
+  This is now the single largest gap between "backends + leaves exist"
+  and "a `problog_project` tree verifiably runs end to end in Gazebo":
+  a build, plus an actual tick of a real tree, hasn't happened.
 - **`move_to_node`'s `FollowPath` integration is untested** — see above.
 - **`HaltedWith` is not implemented anywhere**, and is excluded from
   `xml_validation` entirely.
