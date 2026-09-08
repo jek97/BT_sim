@@ -288,6 +288,72 @@ def build_grid_map(obstacles, resolution, margin, inflate=PLANNING_INFLATE_M):
     return grid
 
 
+def build_polygon_grid(obstacle_polygons, sx, sy, gx, gy,
+                        resolution=GRID_RESOLUTION_M, margin=GRID_MARGIN_M):
+    """Rasterize a query-scoped occupancy grid from GENUINE polygon
+    obstacles (a problog_project problem's own obstacles_generated.pl,
+    via problog_obstacles.py -- see that module's docstring) rather than
+    circular trees: build_occupancy_grid/build_grid_map above both stamp
+    in filled DISKS, which is wrong for an arbitrary polygon, so this is
+    a separate rasterizer, not a parametrized version of those two. Each
+    cell is marked occupied by an exact point-in-polygon test
+    (_inside_polygon, already ported byte-for-byte from
+    problog_project's own planners.py) rather than a distance
+    threshold -- correct for a non-convex/non-circular shape, where
+    "distance to center" means nothing.
+
+    No separate robot-clearance inflation term (unlike
+    build_occupancy_grid's own `inflate`): a problog_project problem's
+    own obstacle polygons are typically already the FULL inflated
+    footprint (occgrid_to_problog.py's own extraction already accounts
+    for robot radius/safety_buffer at the source -- see
+    obstacles_generated.pl's own header comment) -- inflating again here
+    would double-count it."""
+    xs = [x for _oid, poly in obstacle_polygons for x, _y in poly]
+    ys = [y for _oid, poly in obstacle_polygons for _x, y in poly]
+    min_x = min(sx, gx, *xs) - margin if xs else min(sx, gx) - margin
+    max_x = max(sx, gx, *xs) + margin if xs else max(sx, gx) + margin
+    min_y = min(sy, gy, *ys) - margin if ys else min(sy, gy) - margin
+    max_y = max(sy, gy, *ys) + margin if ys else max(sy, gy) + margin
+
+    width = max(1, int(math.ceil((max_x - min_x) / resolution)))
+    height = max(1, int(math.ceil((max_y - min_y) / resolution)))
+    data = np.zeros((height, width), dtype=np.int8)
+    grid = OccupancyGridMap(data, resolution, min_x, min_y)
+
+    for row in range(height):
+        for col in range(width):
+            world_x, world_y = grid.grid_to_world(row, col)
+            for _obstacle_id, polygon in obstacle_polygons:
+                if _inside_polygon(world_x, world_y, polygon):
+                    data[row, col] = 100
+                    break
+
+    return grid
+
+
+def plan_astar_points_polygons(sx, sy, gx, gy, obstacle_polygons):
+    """plan_astar_points's own polygon-obstacle counterpart -- see
+    build_polygon_grid's own docstring for why this needs a separate
+    rasterizer rather than reusing plan_astar_points(obstacles=...)."""
+    sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
+    grid = build_polygon_grid(obstacle_polygons, sx, sy, gx, gy)
+    start_rc = grid.world_to_grid(sx, sy)
+    goal_rc = grid.world_to_grid(gx, gy)
+
+    if not grid.in_bounds(*start_rc) or not grid.in_bounds(*goal_rc):
+        return None
+    if start_rc == goal_rc:
+        return [(sx, sy)] * 4
+
+    path_rc = astar(grid, start_rc, goal_rc)
+    if path_rc is None:
+        return None
+
+    path_xy = [grid.grid_to_world(r, c) for r, c in path_rc]
+    return _fit_or_straight(path_xy, sx, sy, gx, gy)
+
+
 def astar(grid_map, start_rc, goal_rc, occ_thresh=OCC_THRESH,
           connectivity=CONNECTIVITY):
     """8- or 4-connected A* over grid_map -- unchanged from
