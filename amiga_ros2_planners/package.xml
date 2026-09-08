@@ -37,6 +37,10 @@
        coupling, not a build dependency on that package's own code. -->
   <exec_depend>amiga_ros2_behavior_tree</exec_depend>
 
+  <!-- problog_sim_bringup.launch.py/run_problog_problem.launch.py include
+       amiga_ros2_gazebo's own sim_bringup.launch.py at runtime. -->
+  <exec_depend>amiga_ros2_gazebo</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

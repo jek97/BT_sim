@@ -13,22 +13,32 @@ problog_project's own bt_actions.py deliberately left these as
 a Prolog situation, which only exists inside a ProbLog inference run.
 This node is the actual, executable counterpart for this simulation --
 each condition below reads the SAME live state plan_service_node.py
-reads (tf2 pose, the orchard's own obstacles) plus a live battery topic,
-rather than a situation history:
+reads (tf2 pose, an obstacle source) plus a live battery topic, rather
+than a situation history:
 
   DistanceBelow/Equal/Over   -- tf2 current (x,y) vs. an explicit goal
                                  point, exactly as schema.yaml describes.
   ObstacleInBound            -- tf2 current (x,y) vs. the NEAREST
-                                 orchard tree's own boundary clearance
-                                 (geometry.nearest_obstacle) -- a direct
-                                 port of schema.yaml's own semantics.
+                                 obstacle's own boundary clearance --
+                                 a direct port of schema.yaml's own
+                                 semantics.
   ObstacleOnPath             -- NOT a full port -- see its own handler
                                  below for exactly what is and isn't
                                  implemented yet, and why.
   BatteryBelow/Equal/Over    -- the latest sensor_msgs/BatteryState
                                  percentage from battery_sim_node.
   LineOfSightClear           -- tf2 current (x,y) -> goal segment vs.
-                                 `obstacle_id`'s own tree circle.
+                                 `obstacle_id`'s own obstacle shape.
+
+Two obstacle sources, selected by `obstacle_source` (see
+plan_service_node.py's own module docstring for the full rationale --
+both nodes take the SAME two params):
+
+  "orchard" (default) -- this simulation's own live orchard, circular
+    tree canopies (geometry.py's circle primitives).
+  "problog_problem" -- a problog_project problem folder's own
+    obstacles_generated.pl, genuine polygons loaded once at startup
+    (polygon_geometry.py's polygon primitives).
 
 Equality checks (DistanceEqual/BatteryEqual) use a small tolerance
 (`equal_tolerance_m`/`equal_tolerance_pct`) rather than exact float
@@ -42,6 +52,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 
 from amiga_interfaces.srv import EvaluateCondition
+from amiga_ros2_planners import polygon_geometry, problog_problem
 from amiga_ros2_planners.frame_transform import ProblogFrameTransform
 from amiga_ros2_planners.geometry import nearest_obstacle, line_of_sight_clear
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
@@ -76,6 +87,9 @@ class ConditionServiceNode(Node):
         self.declare_parameter("problog_frame_origin_x", 0.0)
         self.declare_parameter("problog_frame_origin_y", 0.0)
         self.declare_parameter("problog_frame_yaw_deg", 0.0)
+        # "orchard" (default) or "problog_problem" -- see module docstring.
+        self.declare_parameter("obstacle_source", "orchard")
+        self.declare_parameter("problem_dir", "")
 
         self._goal_transform = ProblogFrameTransform(
             self.get_parameter("problog_frame_origin_x").value,
@@ -83,13 +97,27 @@ class ConditionServiceNode(Node):
             self.get_parameter("problog_frame_yaw_deg").value,
         )
 
-        self._obstacles = OrchardObstacleStore(
-            self,
-            self.get_parameter("orchard_topic").value,
-            self.get_parameter("datum_lat").value,
-            self.get_parameter("datum_lon").value,
-            self.get_parameter("tree_obstacle_radius").value,
-        )
+        self._problog_mode = (
+            self.get_parameter("obstacle_source").value == "problog_problem")
+        self._obstacles = None
+        self._problem_obstacle_polygons = []
+        if self._problog_mode:
+            problem_dir = self.get_parameter("problem_dir").value
+            self._problem_obstacle_polygons = problog_problem.load_obstacle_polygons(
+                problem_dir)
+            self.get_logger().info(
+                f"obstacle_source=problog_problem: loaded "
+                f"{len(self._problem_obstacle_polygons)} obstacles from "
+                f"'{problem_dir}'")
+        else:
+            self._obstacles = OrchardObstacleStore(
+                self,
+                self.get_parameter("orchard_topic").value,
+                self.get_parameter("datum_lat").value,
+                self.get_parameter("datum_lon").value,
+                self.get_parameter("tree_obstacle_radius").value,
+            )
+
         self._pose = PoseProvider(
             self,
             self.get_parameter("reference_frame").value,
@@ -129,6 +157,17 @@ class ConditionServiceNode(Node):
             return None
         return xy
 
+    def _nearest_clearance(self, x, y):
+        """(clearance to the nearest obstacle) under whichever obstacle
+        source is active -- the one piece of real branching every
+        Obstacle* handler below shares."""
+        if self._problog_mode:
+            _obstacle_id, clearance = polygon_geometry.nearest_polygon_obstacle(
+                x, y, self._problem_obstacle_polygons)
+            return clearance
+        _obstacle, clearance = nearest_obstacle(x, y, self._obstacles.get_obstacles())
+        return clearance
+
     # -- Distance* ------------------------------------------------------
     def _distance_below(self, request, response):
         xy = self._current_xy_or_none(response)
@@ -164,8 +203,7 @@ class ConditionServiceNode(Node):
         if xy is None:
             return response
         x, y = xy
-        obstacles = self._obstacles.get_obstacles()
-        _obstacle, clearance = nearest_obstacle(x, y, obstacles)
+        clearance = self._nearest_clearance(x, y)
         response.result = clearance < request.threshold
         return response
 
@@ -175,23 +213,20 @@ class ConditionServiceNode(Node):
         schema.yaml's own ObstacleOnPath is a check against the CURRENT
         WALK's full future trajectory (does it ever enter an obstacle,
         not just come near one) -- this service has no notion of an
-        in-progress walk to check against, since the MoveTo leg that
-        would produce one isn't implemented in this simulation yet (see
-        the top-level README's own note on MoveTo being deliberately out
-        of scope for this pass). Until that exists, this falls back to
-        the same "is the robot presently on top of an obstacle" check
-        ObstacleInBound-with-a-tight-threshold already gives (clearance
-        < 0, i.e. genuinely inside a canopy) -- correct for "am I in an
-        obstacle right now", not for "will my planned path ever enter
-        one", which is the actually-documented semantics. Revisit once a
-        MoveTo/FollowPath leg can supply its own planned trajectory.
+        in-progress walk to check against, since move_to_node doesn't
+        expose its own planned trajectory anywhere. Until that exists,
+        this falls back to the same "is the robot presently on top of
+        an obstacle" check ObstacleInBound-with-a-tight-threshold
+        already gives (clearance < 0, i.e. genuinely inside an
+        obstacle) -- correct for "am I in an obstacle right now", not
+        for "will my planned path ever enter one", which is the
+        actually-documented semantics.
         """
         xy = self._current_xy_or_none(response)
         if xy is None:
             return response
         x, y = xy
-        obstacles = self._obstacles.get_obstacles()
-        _obstacle, clearance = nearest_obstacle(x, y, obstacles)
+        clearance = self._nearest_clearance(x, y)
         response.result = clearance < 0.0
         response.reason = "partial_port: current-position-only, not full-trajectory"
         return response
@@ -232,6 +267,19 @@ class ConditionServiceNode(Node):
         if xy is None:
             return response
         x, y = xy
+
+        if self._problog_mode:
+            polygon = next(
+                (pts for oid, pts in self._problem_obstacle_polygons
+                 if oid == request.obstacle_id), None)
+            if polygon is None:
+                response.result = False
+                response.reason = "no_such_obstacle"
+                return response
+            response.result = polygon_geometry.line_of_sight_clear_polygon(
+                x, y, request.goal_x, request.goal_y, polygon)
+            return response
+
         obstacle = self._obstacles.get_obstacle(request.obstacle_id)
         if obstacle is None:
             response.result = False

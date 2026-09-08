@@ -12,7 +12,8 @@ namespace with no caller cooperation needed.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -64,13 +65,31 @@ def generate_launch_description():
             "same goal a DistanceBelow checks against always agree."),
         DeclareLaunchArgument("problog_frame_origin_y", default_value="0.0"),
         DeclareLaunchArgument("problog_frame_yaw_deg", default_value="0.0"),
+        DeclareLaunchArgument(
+            "obstacle_source", default_value="orchard",
+            description="\"orchard\" (default, this sim's own live trees) "
+            "or \"problog_problem\" (a problog_project problem folder's "
+            "own obstacles_generated.pl, loaded once from problem_dir) "
+            "-- see plan_service_node.py's own module docstring."),
+        DeclareLaunchArgument(
+            "problem_dir", default_value="",
+            description="Required when obstacle_source:=problog_problem."),
+        DeclareLaunchArgument("battery_start_percent", default_value="100.0"),
+        DeclareLaunchArgument("battery_idle_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("battery_moving_drain_rate_pct_s", default_value="0.1"),
 
+        # Pointless (and noisy -- it would wait forever for an orchard
+        # JSON that never arrives) in problog_problem mode, where A*
+        # rasterizes its own grid from that problem's own obstacles
+        # instead -- see plan_service_node.py's own module docstring.
         Node(
             package="amiga_ros2_planners",
             executable="orchard_map",
             name="orchard_map_node",
             namespace=namespace,
             output="screen",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("obstacle_source"), "' == 'orchard'"])),
             parameters=[{
                 "orchard_topic": LaunchConfiguration("orchard_topic"),
                 "datum_lat": LaunchConfiguration("datum_lat"),
@@ -99,6 +118,8 @@ def generate_launch_description():
                 "problog_frame_origin_x": LaunchConfiguration("problog_frame_origin_x"),
                 "problog_frame_origin_y": LaunchConfiguration("problog_frame_origin_y"),
                 "problog_frame_yaw_deg": LaunchConfiguration("problog_frame_yaw_deg"),
+                "obstacle_source": LaunchConfiguration("obstacle_source"),
+                "problem_dir": LaunchConfiguration("problem_dir"),
             }],
         ),
         Node(
@@ -118,6 +139,8 @@ def generate_launch_description():
                 "problog_frame_origin_x": LaunchConfiguration("problog_frame_origin_x"),
                 "problog_frame_origin_y": LaunchConfiguration("problog_frame_origin_y"),
                 "problog_frame_yaw_deg": LaunchConfiguration("problog_frame_yaw_deg"),
+                "obstacle_source": LaunchConfiguration("obstacle_source"),
+                "problem_dir": LaunchConfiguration("problem_dir"),
             }],
         ),
         Node(
@@ -142,6 +165,11 @@ def generate_launch_description():
             parameters=[{
                 "odom_topic": LaunchConfiguration("odom_topic"),
                 "battery_topic": LaunchConfiguration("battery_topic"),
+                "start_percent": LaunchConfiguration("battery_start_percent"),
+                "idle_drain_rate_pct_s": LaunchConfiguration(
+                    "battery_idle_drain_rate_pct_s"),
+                "moving_drain_rate_pct_s": LaunchConfiguration(
+                    "battery_moving_drain_rate_pct_s"),
             }],
         ),
     ])

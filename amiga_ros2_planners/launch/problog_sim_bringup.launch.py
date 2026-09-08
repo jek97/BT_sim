@@ -39,9 +39,15 @@ Once running, feed a mission the normal way:
     nc 0.0.0.0 12346 < your_adapted_tree.xml
 (see amiga_ros2_behavior_tree/README.md's own "Quick demo" for the
 expect_json/payload_length_included framing options, and
-amiga_ros2_planners/scripts/adapt_problog_tree.py to produce
-your_adapted_tree.xml from a problog_project problem in the first
-place).
+`ros2 run amiga_ros2_planners adapt_tree` to produce your_adapted_tree.xml
+from a problog_project problem in the first place).
+
+For a problog_project PROBLEM folder specifically (that problem's own
+obstacles, not the live orchard, plus zero manual steps -- calibration,
+adaptation, and feeding the mission all done automatically), use
+run_problog_problem.launch.py instead of this file directly; it wraps
+this file with `obstacle_source:=problog_problem` and everything else
+computed from the problem folder itself.
 """
 import os
 
@@ -69,6 +75,13 @@ def generate_launch_description():
     problog_frame_origin_y = LaunchConfiguration("problog_frame_origin_y")
     problog_frame_yaw_deg = LaunchConfiguration("problog_frame_yaw_deg")
     mission_schema = LaunchConfiguration("mission_schema")
+    obstacle_source = LaunchConfiguration("obstacle_source")
+    problem_dir = LaunchConfiguration("problem_dir")
+    battery_start_percent = LaunchConfiguration("battery_start_percent")
+    battery_idle_drain_rate_pct_s = LaunchConfiguration("battery_idle_drain_rate_pct_s")
+    battery_moving_drain_rate_pct_s = LaunchConfiguration("battery_moving_drain_rate_pct_s")
+    expect_json = LaunchConfiguration("expect_json")
+    payload_length_included = LaunchConfiguration("payload_length_included")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -99,6 +112,20 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "headless", default_value="false",
             description="Passed straight through to sim_bringup.launch.py."),
+        DeclareLaunchArgument(
+            "obstacle_source", default_value="orchard",
+            description="\"orchard\" (default) or \"problog_problem\" -- "
+            "forwarded to planners.launch.py's own arg of the same name."),
+        DeclareLaunchArgument("problem_dir", default_value=""),
+        DeclareLaunchArgument("battery_start_percent", default_value="100.0"),
+        DeclareLaunchArgument("battery_idle_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("battery_moving_drain_rate_pct_s", default_value="0.1"),
+        DeclareLaunchArgument(
+            "expect_json", default_value="true",
+            description="Forwarded to sim_bringup.launch.py -- set false "
+            "for a mission with no second (orchard JSON) frame, e.g. a "
+            "problog_project problem."),
+        DeclareLaunchArgument("payload_length_included", default_value="true"),
 
         _include(
             "amiga_ros2_gazebo", "sim_bringup.launch.py",
@@ -109,6 +136,8 @@ def generate_launch_description():
             launch_bt="true",
             headless=LaunchConfiguration("headless"),
             mission_schema=mission_schema,
+            expect_json=expect_json,
+            payload_length_included=payload_length_included,
         ),
         _include(
             "amiga_ros2_planners", "planners.launch.py",
@@ -118,5 +147,10 @@ def generate_launch_description():
             problog_frame_origin_x=problog_frame_origin_x,
             problog_frame_origin_y=problog_frame_origin_y,
             problog_frame_yaw_deg=problog_frame_yaw_deg,
+            obstacle_source=obstacle_source,
+            problem_dir=problem_dir,
+            battery_start_percent=battery_start_percent,
+            battery_idle_drain_rate_pct_s=battery_idle_drain_rate_pct_s,
+            battery_moving_drain_rate_pct_s=battery_moving_drain_rate_pct_s,
         ),
     ])

@@ -157,6 +157,8 @@ def launch_setup(context, *args, **kwargs):
     yaw_offset = LaunchConfiguration("yaw_offset")
     mission_port_base = int(LaunchConfiguration("mission_port_base").perform(context))
     mission_schema = LaunchConfiguration("mission_schema")
+    expect_json = LaunchConfiguration("expect_json")
+    payload_length_included = LaunchConfiguration("payload_length_included")
 
     launch_nav = LaunchConfiguration("launch_nav").perform(context).lower() == "true"
     launch_arm = LaunchConfiguration("launch_arm").perform(context).lower() == "true"
@@ -426,6 +428,8 @@ def launch_setup(context, *args, **kwargs):
                     namespace=ns,
                     port=str(mission_port_base + i - 1),
                     mission_schema=mission_schema,
+                    expect_json=expect_json,
+                    payload_length_included=payload_length_included,
                 )
             )
 
@@ -515,6 +519,18 @@ def generate_launch_description():
                 "arg for every robot -- point this at "
                 "amiga_ros2_planners' amiga_btcpp_planners.xsd for a "
                 "mission using PlanWith/MoveTo/the ported conditions.",
+            ),
+            DeclareLaunchArgument(
+                "expect_json", default_value="true",
+                description="Forwarded to bt.launch.py's own tcp_demux_node "
+                "arg for every robot -- set false for a mission with no "
+                "second (orchard JSON) frame, e.g. a problog_project "
+                "problem run via run_problog_problem.launch.py.",
+            ),
+            DeclareLaunchArgument(
+                "payload_length_included", default_value="true",
+                description="Forwarded to bt.launch.py's own tcp_demux_node "
+                "arg for every robot.",
             ),
             DeclareLaunchArgument(
                 "broken_sampler_robot",
