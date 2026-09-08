@@ -83,17 +83,33 @@ int main(int argc, char **argv) {
   // each one does and doesn't carry over from problog_project's own
   // semantics. HaltedWith has no leaf here on purpose -- see
   // evaluate_condition_base.hpp's own header.
-  factory.registerNodeType<PlanWith>("PlanWith", ros_params);
-  factory.registerNodeType<MoveTo>("MoveTo", ros_params);
-  factory.registerNodeType<DistanceBelow>("DistanceBelow", ros_params);
-  factory.registerNodeType<DistanceEqual>("DistanceEqual", ros_params);
-  factory.registerNodeType<DistanceOver>("DistanceOver", ros_params);
-  factory.registerNodeType<ObstacleInBound>("ObstacleInBound", ros_params);
-  factory.registerNodeType<ObstacleOnPath>("ObstacleOnPath", ros_params);
-  factory.registerNodeType<BatteryBelow>("BatteryBelow", ros_params);
-  factory.registerNodeType<BatteryEqual>("BatteryEqual", ros_params);
-  factory.registerNodeType<BatteryOver>("BatteryOver", ros_params);
-  factory.registerNodeType<LineOfSightClear>("LineOfSightClear", ros_params);
+  //
+  // Unlike the pre-existing leaves above, problog-derived mission XML
+  // never carries a literal service_name/action_name attribute (that's
+  // not a concept in problog_project's own schema), so each of these
+  // needs its own RosNodeParams with default_port_value set to the
+  // fixed service/action name its Python backend actually advertises
+  // (plan_service_node.py/move_to_node.py/condition_service_node.py) --
+  // otherwise RosServiceNode/RosActionNode has no client to dial and
+  // throws at tick time.
+  RosNodeParams plan_params = ros_params;
+  plan_params.default_port_value = "plan_path";
+  RosNodeParams move_to_params = ros_params;
+  move_to_params.default_port_value = "move_to";
+  RosNodeParams condition_params = ros_params;
+  condition_params.default_port_value = "evaluate_condition";
+
+  factory.registerNodeType<PlanWith>("PlanWith", plan_params);
+  factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
+  factory.registerNodeType<DistanceBelow>("DistanceBelow", condition_params);
+  factory.registerNodeType<DistanceEqual>("DistanceEqual", condition_params);
+  factory.registerNodeType<DistanceOver>("DistanceOver", condition_params);
+  factory.registerNodeType<ObstacleInBound>("ObstacleInBound", condition_params);
+  factory.registerNodeType<ObstacleOnPath>("ObstacleOnPath", condition_params);
+  factory.registerNodeType<BatteryBelow>("BatteryBelow", condition_params);
+  factory.registerNodeType<BatteryEqual>("BatteryEqual", condition_params);
+  factory.registerNodeType<BatteryOver>("BatteryOver", condition_params);
+  factory.registerNodeType<LineOfSightClear>("LineOfSightClear", condition_params);
 
   std::string schema_path;
   try {
