@@ -126,6 +126,19 @@ class PlanServiceNode(Node):
                 OccupancyGrid, self.get_parameter("map_topic").value,
                 self._on_map, map_qos)
 
+        # Wait for tf2's first base_frame->reference_frame transform before
+        # advertising the service at all: Gazebo's diff_drive_controller
+        # (the odom->base_link source) can take several seconds to load
+        # after this node starts, well after a mission can already have
+        # arrived and started ticking. Advertising early would answer that
+        # first tick with a hard "no_pose" FAILURE and permanently fail a
+        # plain (non-reactive) Sequence/Fallback; not advertising yet makes
+        # BT.cpp's RosServiceNode see "service unavailable", which it
+        # retries as RUNNING instead. See pose.py's own wait_ready docstring.
+        if not self._pose.wait_ready():
+            self.get_logger().warn(
+                "plan_service_node: no pose after startup timeout, "
+                "advertising 'plan_path' anyway")
         self._srv = self.create_service(PlanPath, "plan_path", self._on_request)
         self.get_logger().info("plan_service_node ready on 'plan_path'")
 

@@ -140,6 +140,27 @@ class ConditionServiceNode(Node):
             "LineOfSightClear": self._line_of_sight_clear,
         }
 
+        # Wait for tf2's first pose AND the first BatteryState message
+        # before advertising the service: both can arrive several seconds
+        # after this node starts (Gazebo's diff_drive_controller/
+        # battery_sim_node), well after a mission can already be ticking.
+        # Advertising early would answer a condition's first tick with a
+        # hard result=False/"no_pose"/"no_battery_reading" -- FAILURE for
+        # whatever plain (non-reactive) Sequence/Fallback holds it, which
+        # bt_runner then treats as the mission's own final, permanent
+        # outcome. Not advertising yet makes BT.cpp's RosServiceNode see
+        # "service unavailable", which it retries as RUNNING instead. See
+        # pose.py's own PoseProvider.wait_ready docstring.
+        pose_ready = self._pose.wait_ready()
+        battery_deadline = self.get_clock().now() + rclpy.duration.Duration(
+            seconds=30.0)
+        while self._battery_percent is None and self.get_clock().now() < battery_deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if not pose_ready or self._battery_percent is None:
+            self.get_logger().warn(
+                "condition_service_node: pose_ready=%s battery_ready=%s "
+                "after startup timeout, advertising 'evaluate_condition' "
+                "anyway" % (pose_ready, self._battery_percent is not None))
         self._srv = self.create_service(
             EvaluateCondition, "evaluate_condition", self._on_request)
         self.get_logger().info(

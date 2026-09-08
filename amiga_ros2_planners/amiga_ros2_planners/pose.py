@@ -38,3 +38,25 @@ class PoseProvider:
             return None
         t = transform.transform.translation
         return t.x, t.y
+
+    def wait_ready(self, timeout_sec=30.0):
+        """Spin this provider's own node until get_xy() first succeeds,
+        or `timeout_sec` elapses (returns whether it became ready).
+
+        Startup-ordering fix: a mission can arrive and start ticking
+        (run_problog_problem.launch.py's own send_mission retries
+        independently of the rest of bringup) well before Gazebo's
+        diff_drive_controller/localization stack has published the
+        first base_frame->reference_frame transform. Call this BEFORE
+        advertising a service/action that answers from get_xy() so
+        BT.cpp's RosServiceNode/RosActionNode sees "service not yet
+        available" (which it retries as RUNNING) instead of a
+        one-shot FAILURE response with reason="no_pose" that would
+        permanently fail a plain (non-reactive) Sequence/Fallback."""
+        deadline = self._node.get_clock().now() + rclpy.duration.Duration(
+            seconds=timeout_sec)
+        while self.get_xy() is None:
+            if self._node.get_clock().now() >= deadline:
+                return False
+            rclpy.spin_once(self._node, timeout_sec=0.1)
+        return True
