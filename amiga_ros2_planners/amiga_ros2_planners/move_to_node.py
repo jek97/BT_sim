@@ -99,6 +99,22 @@ class MoveToNode(Node):
         # _execute()'s own cancel-handling comment for the full latency
         # budget this feeds into.
         self.declare_parameter("trigger_poll_period_s", 0.2)
+        # This node deliberately bypasses Nav2's own NavigateToPose/
+        # bt_navigator pipeline (see this module's own docstring) --
+        # unlike this repo's OTHER move actions (MoveToGPSLocation/
+        # MoveToTreeID/etc, all of which go through bt_navigator's own
+        # recovery behaviors: spin/backup/wait/clear-costmaps), a bare
+        # FollowPath goal here has NO recovery layer of its own. If
+        # controller_server ever stops making progress for a reason
+        # none of `triggers` covers (e.g. a stale local_costmap
+        # observation source -- see sim_camera_shim.py's own respawn
+        # comment for one concrete way that happens), this walk would
+        # otherwise run forever with no way for the BT tree holding it
+        # to ever recover. This is a blunt backstop, not a substitute
+        # for Nav2's own recoveries: it only ends a walk that has
+        # already run unreasonably long, it doesn't try to fix
+        # anything first.
+        self.declare_parameter("max_walk_duration_s", 120.0)
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter("controller_id", "")
 
@@ -259,12 +275,25 @@ class MoveToNode(Node):
         parsed_triggers = self._parse_triggers(list(goal.triggers))
         get_result_future = follow_path_goal_handle.get_result_async()
         poll_period = self.get_parameter("trigger_poll_period_s").value
+        max_walk_duration = self.get_parameter("max_walk_duration_s").value
+        walk_start = time.monotonic()
 
         fired_trigger = None
         while not get_result_future.done():
             rclpy.spin_once(self, timeout_sec=poll_period)
             if get_result_future.done():
                 break
+            if time.monotonic() - walk_start > max_walk_duration:
+                self.get_logger().error(
+                    f"MoveTo: no result after {max_walk_duration}s, "
+                    "cancelling (see max_walk_duration_s's own comment "
+                    "-- this walk has no Nav2 recovery layer of its own)")
+                cancel_future = follow_path_goal_handle.cancel_goal_async()
+                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
+                rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=2.0)
+                goal_handle.abort()
+                result.reason, result.status = "timeout", False
+                return result
             if goal_handle.is_cancel_requested:
                 # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
                 # waits for THIS action's own result before a containing
