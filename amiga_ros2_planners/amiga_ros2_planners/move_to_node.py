@@ -136,9 +136,27 @@ class MoveToNode(Node):
         # need to complete WHILE this action's own execute callback is
         # still running -- a ReentrantCallbackGroup plus the ActionServer's
         # own default of running each goal's execute callback on its own
-        # thread is what makes the blocking spin_until_future_complete
-        # calls below safe rather than deadlocking against this same
-        # node's main spin.
+        # thread is what lets this node wait on ANOTHER call's future
+        # from inside _execute() without deadlocking against this same
+        # node's own main spin.
+        #
+        # That waiting is done with this module's own _wait_for_future()
+        # (plain future.done() polling + time.sleep), deliberately NOT
+        # rclpy.spin_once()/spin_until_future_complete(self, ...): those
+        # top-level helpers each do their own executor.add_node(self),
+        # reassigning this node's own .executor out from under whatever
+        # already owns it (main()'s MultiThreadedExecutor here). Called
+        # occasionally that's mostly harmless, but _execute() calls one
+        # of them on every trigger-poll tick of every walk, and the
+        # cancellation path fires two more back-to-back -- concurrent
+        # re-entrant spins like that are a known way for an executor to
+        # lose track of a node's callbacks. Observed effect: the very
+        # first walk of a mission always worked, but the walk
+        # immediately after the first BatteryOver-triggered cancel never
+        # produced a single piece of feedback again for the rest of that
+        # mission. _wait_for_future() never touches .executor at all --
+        # it just polls, so the externally-owned MultiThreadedExecutor
+        # remains the only thing that ever actually spins this node.
         self._cb_group = ReentrantCallbackGroup()
         self._follow_path_client = ActionClient(
             self, FollowPath, self.get_parameter("follow_path_action").value,
@@ -171,6 +189,25 @@ class MoveToNode(Node):
             parsed.append((trigger, condition, value))
         return parsed
 
+    @staticmethod
+    def _wait_for_future(future, timeout_sec, poll_interval_s=0.02):
+        """Block up to timeout_sec for `future` to resolve, WITHOUT
+        spinning this node ourselves -- see the constructor's own
+        comment on why rclpy.spin_once()/spin_until_future_complete(
+        self, ...) are unsafe to call from here. Whatever callback
+        fulfills `future` runs on the externally-owned
+        MultiThreadedExecutor's own worker threads regardless of
+        whether this thread spins or not; this just waits for it.
+        Returns whether it resolved in time (mirrors
+        spin_until_future_complete's own success/timeout distinction,
+        since callers here branch on that)."""
+        deadline = time.monotonic() + timeout_sec
+        while not future.done():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_interval_s)
+        return True
+
     def _check_triggers(self, parsed_triggers):
         """The first trigger string that currently evaluates true, or
         None. One EvaluateCondition call per trigger per poll -- fine at
@@ -182,7 +219,7 @@ class MoveToNode(Node):
             request.condition = condition
             request.threshold = threshold
             future = self._condition_client.call_async(request)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
+            self._wait_for_future(future, timeout_sec=1.0)
             response = future.result()
             if response is not None and response.result:
                 return original
@@ -258,7 +295,7 @@ class MoveToNode(Node):
             send_future = self._follow_path_client.send_goal_async(
                 follow_goal,
                 feedback_callback=lambda fb: self._on_follow_path_feedback(fb, goal_handle))
-            rclpy.spin_until_future_complete(self, send_future)
+            self._wait_for_future(send_future, timeout_sec=30.0)
             follow_path_goal_handle = send_future.result()
             if follow_path_goal_handle is not None and follow_path_goal_handle.accepted:
                 break
@@ -280,7 +317,7 @@ class MoveToNode(Node):
 
         fired_trigger = None
         while not get_result_future.done():
-            rclpy.spin_once(self, timeout_sec=poll_period)
+            time.sleep(poll_period)
             if get_result_future.done():
                 break
             if time.monotonic() - walk_start > max_walk_duration:
@@ -289,8 +326,8 @@ class MoveToNode(Node):
                     "cancelling (see max_walk_duration_s's own comment "
                     "-- this walk has no Nav2 recovery layer of its own)")
                 cancel_future = follow_path_goal_handle.cancel_goal_async()
-                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
-                rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=2.0)
+                self._wait_for_future(cancel_future, timeout_sec=2.0)
+                self._wait_for_future(get_result_future, timeout_sec=2.0)
                 goal_handle.abort()
                 result.reason, result.status = "timeout", False
                 return result
@@ -304,8 +341,8 @@ class MoveToNode(Node):
                 # cancel ack/result normally arrive in well under a
                 # second on a local controller_server.
                 cancel_future = follow_path_goal_handle.cancel_goal_async()
-                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
-                rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=2.0)
+                self._wait_for_future(cancel_future, timeout_sec=2.0)
+                self._wait_for_future(get_result_future, timeout_sec=2.0)
                 goal_handle.canceled()
                 result.reason, result.status = "canceled", False
                 return result
@@ -313,8 +350,8 @@ class MoveToNode(Node):
                 fired_trigger = self._check_triggers(parsed_triggers)
                 if fired_trigger is not None:
                     cancel_future = follow_path_goal_handle.cancel_goal_async()
-                    rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=5.0)
-                    rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=5.0)
+                    self._wait_for_future(cancel_future, timeout_sec=5.0)
+                    self._wait_for_future(get_result_future, timeout_sec=5.0)
                     break
 
         if fired_trigger is not None:
