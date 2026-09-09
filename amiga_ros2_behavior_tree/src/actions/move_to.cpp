@@ -67,7 +67,14 @@ BT::NodeStatus MoveTo::onResultReceived(const WrappedResult &result) {
 }
 
 BT::NodeStatus MoveTo::onFeedback(const std::shared_ptr<const Feedback> feedback) {
-  RCLCPP_INFO(logger(), "MoveTo: distance to goal: %.2f m", feedback->distance_to_goal);
+  // Throttled: FollowPath feedback arrives at controller_server's own
+  // control frequency (5-20Hz typical), so an unthrottled RCLCPP_INFO
+  // here floods the terminal with one line per feedback message for
+  // the entire length of every walk.
+  static int feedback_count = 0;
+  if (feedback_count++ % 20 == 0) {
+    RCLCPP_INFO(logger(), "MoveTo: distance to goal: %.2f m", feedback->distance_to_goal);
+  }
   return BT::NodeStatus::RUNNING;
 }
 

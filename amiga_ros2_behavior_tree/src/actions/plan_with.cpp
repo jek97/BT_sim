@@ -64,7 +64,13 @@ bool PlanWith::setRequest(Request::SharedPtr &request) {
   getInput("offset", offset);
   request->offset = offset;
 
-  RCLCPP_INFO(logger(), "PlanWith: requesting algorithm=%s", algorithm.c_str());
+  // Throttled: this leaf sits inside a ReactiveSequence ahead of MoveTo
+  // (see this class's own header), so it's re-run and re-logged on
+  // EVERY tree tick (~20-50ms) for as long as MoveTo is walking, not
+  // just once -- an unthrottled RCLCPP_INFO here floods the terminal
+  // with an unchanging message for the entire length of every walk.
+  RCLCPP_INFO_THROTTLE(logger(), *node_->get_clock(), 2000,
+                       "PlanWith: requesting algorithm=%s", algorithm.c_str());
   return true;
 }
 
@@ -96,8 +102,9 @@ BT::NodeStatus PlanWith::onResponseReceived(const Response::SharedPtr &response)
   setOutput("status", response->status);
 
   if (response->status) {
-    RCLCPP_INFO(logger(), "PlanWith: completed (%zu control points)",
-                response->control_points.size());
+    RCLCPP_INFO_THROTTLE(logger(), *node_->get_clock(), 2000,
+                         "PlanWith: completed (%zu control points)",
+                         response->control_points.size());
     return BT::NodeStatus::SUCCESS;
   }
   RCLCPP_WARN(logger(), "PlanWith: failed, reason=%s", response->reason.c_str());

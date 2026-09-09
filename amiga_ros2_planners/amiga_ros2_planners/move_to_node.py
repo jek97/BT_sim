@@ -94,7 +94,11 @@ class MoveToNode(Node):
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("samples_per_segment", 10)
-        self.declare_parameter("trigger_poll_period_s", 0.5)
+        # Also bounds how quickly a BT-side cancel (e.g. a ReactiveSequence
+        # guard like BatteryOver failing) is even noticed here -- see
+        # _execute()'s own cancel-handling comment for the full latency
+        # budget this feeds into.
+        self.declare_parameter("trigger_poll_period_s", 0.2)
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter("controller_id", "")
 
@@ -262,9 +266,17 @@ class MoveToNode(Node):
             if get_result_future.done():
                 break
             if goal_handle.is_cancel_requested:
+                # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
+                # waits for THIS action's own result before a containing
+                # ReactiveSequence/Fallback can move on (e.g. to problog's
+                # own GoHome branch once BatteryOver fails) -- worst case
+                # here is trigger_poll_period_s (noticing the cancel) plus
+                # these two timeouts, so keep them tight; Nav2's own
+                # cancel ack/result normally arrive in well under a
+                # second on a local controller_server.
                 cancel_future = follow_path_goal_handle.cancel_goal_async()
-                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=5.0)
-                rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=5.0)
+                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
+                rclpy.spin_until_future_complete(self, get_result_future, timeout_sec=2.0)
                 goal_handle.canceled()
                 result.reason, result.status = "canceled", False
                 return result
