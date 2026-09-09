@@ -107,8 +107,10 @@ int main(int argc, char **argv) {
   // and fails BatteryOver/PlanWith outright on a startup race, not a
   // real condition/plan answer, which can steer an entire plain
   // Fallback down the wrong branch before its backend ever got a
-  // chance to answer for real. Give these three the same generous
-  // budget the Python side already waits up to (set both timeout
+  // chance to answer for real. Give these two (PlanWith, the
+  // condition leaves -- NOT MoveTo, see its own comment below) the
+  // same generous budget the Python side already waits up to (set
+  // both timeout
   // fields since it's the existence check, wait_for_server_timeout,
   // that this specific error comes from, but a slow first response
   // right after startup is plausible too).
@@ -118,10 +120,19 @@ int main(int argc, char **argv) {
   plan_params.default_port_value = "plan_path";
   plan_params.wait_for_server_timeout = backend_timeout;
   plan_params.server_timeout = backend_timeout;
+  // move_to_node.py's own "move_to" ActionServer, unlike plan_path/
+  // evaluate_condition, is advertised immediately at startup (its own
+  // pose wait happens later, per-goal, inside _execute() -- see that
+  // file's own comment) -- it never needed the long budget above. Left
+  // at the library default, this ALSO matters for how long a
+  // cancelled/failed MoveTo takes to be noticed: RosActionNode's
+  // server_timeout doubles as its no-feedback watchdog, so giving it
+  // 30s here (as an earlier fix mistakenly did, copy-pasted from the
+  // other two) meant every BatteryOver-triggered cancel took a full
+  // 30 real seconds to resolve before the outer Fallback could ever
+  // reach GoHome.
   RosNodeParams move_to_params = ros_params;
   move_to_params.default_port_value = "move_to";
-  move_to_params.wait_for_server_timeout = backend_timeout;
-  move_to_params.server_timeout = backend_timeout;
   RosNodeParams condition_params = ros_params;
   condition_params.default_port_value = "evaluate_condition";
   condition_params.wait_for_server_timeout = backend_timeout;
