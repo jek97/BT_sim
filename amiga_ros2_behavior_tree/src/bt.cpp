@@ -123,16 +123,27 @@ int main(int argc, char **argv) {
   // move_to_node.py's own "move_to" ActionServer, unlike plan_path/
   // evaluate_condition, is advertised immediately at startup (its own
   // pose wait happens later, per-goal, inside _execute() -- see that
-  // file's own comment) -- it never needed the long budget above. Left
-  // at the library default, this ALSO matters for how long a
-  // cancelled/failed MoveTo takes to be noticed: RosActionNode's
-  // server_timeout doubles as its no-feedback watchdog, so giving it
-  // 30s here (as an earlier fix mistakenly did, copy-pasted from the
-  // other two) meant every BatteryOver-triggered cancel took a full
-  // 30 real seconds to resolve before the outer Fallback could ever
-  // reach GoHome.
+  // file's own comment) -- it never needed the 30s budget above, and
+  // RosActionNode's server_timeout doubles as its no-feedback
+  // watchdog, so 30s here meant every BatteryOver-triggered cancel
+  // took a full 30 real seconds to resolve before the outer Fallback
+  // could ever reach GoHome.
+  //
+  // The library's own DEFAULT (1s) turned out to be the opposite
+  // mistake: rclpy's ActionServer (move_to_node.py) does not start
+  // executing a NEW goal until the PREVIOUS one's own execute()
+  // callback has fully returned, and that can legitimately take
+  // close to a second after a cancel (move_to_node.py's own
+  // cancel_goal_async + get_result_async waits, now capped at 2s
+  // each). GoHome's very next MoveTo goal was hitting bt.cpp's 1s
+  // watchdog before move_to_node.py had even started producing
+  // feedback for it -- "BT fault: MoveTo (MoveTo) failed" with no
+  // controller_server activity at all. 5s comfortably covers that
+  // worst-case serialized handoff while still catching a genuinely
+  // stuck walk far sooner than the mistaken 30s did.
   RosNodeParams move_to_params = ros_params;
   move_to_params.default_port_value = "move_to";
+  move_to_params.server_timeout = std::chrono::milliseconds(5000);
   RosNodeParams condition_params = ros_params;
   condition_params.default_port_value = "evaluate_condition";
   condition_params.wait_for_server_timeout = backend_timeout;
