@@ -6,10 +6,20 @@ namespace amiga_bt {
 
 PlanWith::PlanWith(const std::string &name, const BT::NodeConfig &config,
                    const BT::RosNodeParams &params)
-    : BT::RosServiceNode<PlanPath>(name, config, params) {}
+    : BT::SyncActionNode(name, config), node_(params.nh) {
+  service_name_ = params.default_port_value;
+  // Deliberately no default value on the "service_name" port itself: see
+  // evaluate_condition_base.cpp's own comment on the identical pattern --
+  // a declared default would make getInput() always report success and
+  // silently blank out the params.default_port_value fallback above.
+  getInput("service_name", service_name_);
+  client_ = node_->create_client<PlanPath>(service_name_);
+  timeout_ = params.server_timeout;
+}
 
 BT::PortsList PlanWith::providedPorts() {
-  return providedBasicPorts({
+  return {
+      BT::InputPort<std::string>("service_name", "ROS2 service name"),
       BT::InputPort<std::string>("algorithm"),
       // "X;Y" -- required for astar/straight/voronoi, omitted for
       // follow_boarder (see PlanPath.srv's own header).
@@ -23,7 +33,7 @@ BT::PortsList PlanWith::providedPorts() {
       BT::OutputPort<std::vector<geometry_msgs::msg::Point>>("control_points"),
       BT::OutputPort<std::string>("reason"),
       BT::OutputPort<bool>("status"),
-  });
+  };
 }
 
 bool PlanWith::setRequest(Request::SharedPtr &request) {
@@ -58,6 +68,28 @@ bool PlanWith::setRequest(Request::SharedPtr &request) {
   return true;
 }
 
+BT::NodeStatus PlanWith::tick() {
+  Request::SharedPtr request = std::make_shared<Request>();
+  if (!setRequest(request)) {
+    return BT::NodeStatus::FAILURE;
+  }
+
+  if (!client_->wait_for_service(timeout_)) {
+    return onFailure("service '" + service_name_ + "' is not reachable");
+  }
+
+  // Humble's Client::async_send_request() returns a plain
+  // std::shared_future<Response::SharedPtr> directly -- see
+  // evaluate_condition_base.cpp's own comment on the same rclcpp
+  // version detail.
+  auto future = client_->async_send_request(request);
+  if (rclcpp::spin_until_future_complete(node_, future, timeout_) !=
+      rclcpp::FutureReturnCode::SUCCESS) {
+    return onFailure("call to '" + service_name_ + "' failed or timed out");
+  }
+  return onResponseReceived(future.get());
+}
+
 BT::NodeStatus PlanWith::onResponseReceived(const Response::SharedPtr &response) {
   setOutput("control_points", response->control_points);
   setOutput("reason", response->reason);
@@ -72,8 +104,8 @@ BT::NodeStatus PlanWith::onResponseReceived(const Response::SharedPtr &response)
   return BT::NodeStatus::FAILURE;
 }
 
-BT::NodeStatus PlanWith::onFailure(BT::ServiceNodeErrorCode error) {
-  RCLCPP_ERROR(logger(), "PlanWith: service call failed, error code %d", int(error));
+BT::NodeStatus PlanWith::onFailure(const std::string &error_detail) {
+  RCLCPP_ERROR(logger(), "PlanWith: service call failed: %s", error_detail.c_str());
   setOutput("reason", std::string("service_call_failed"));
   setOutput("status", false);
   return BT::NodeStatus::FAILURE;
