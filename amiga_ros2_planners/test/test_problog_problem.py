@@ -57,3 +57,57 @@ def test_battery_params_from_config():
 def test_battery_params_defaults_when_missing():
     params = pp.battery_params({})
     assert params["start_percent"] == 100.0
+
+
+def test_sample_params_from_config():
+    assert pp.sample_params({"sample": {"success_probability": 0.75}}) == {
+        "success_probability": 0.75}
+
+
+def test_sample_params_defaults_when_missing():
+    assert pp.sample_params({}) == {"success_probability": 0.5}
+
+
+def test_tool_params_defaults_when_missing():
+    params = pp.tool_params({})
+    assert params["install_duration_s"] == {"cart": 10.0, "plow": 10.0}
+    assert params["uninstall_duration_s"] == {"cart": 10.0, "plow": 10.0}
+    assert params["install_success_probability"] == 0.9
+    assert params["uninstall_success_probability"] == 0.9
+    # No battery: section either -- drain rate falls back to
+    # battery_params' own idle_drain_rate default.
+    assert params["install_drain_rate_pct_s"] == 0.01
+    assert params["uninstall_drain_rate_pct_s"] == 0.01
+    assert params["speed"] == {"free": 1.0, "cart": 1.0, "plow": 1.0}
+    assert params["moving_drain_rate_pct_s"] == {"free": 0.1, "cart": 0.1, "plow": 0.1}
+
+
+def test_tool_params_per_tool_overrides():
+    config = {
+        "motion": {"speed": 2.0},
+        "battery": {"idle_drain_rate": 0.02, "moving_drain_rate": 0.2},
+        "tool": {
+            "install": {
+                "success_probability": 0.8,
+                "drain_rate": 0.03,
+                "duration_seconds": {"cart": 5.0},
+            },
+            "uninstall": {"duration_seconds": {"plow": 7.0}},
+            "equipped": {
+                "cart": {"speed": 0.5, "moving_drain_rate": 0.4},
+            },
+        },
+    }
+    params = pp.tool_params(config)
+    # cart overridden, plow falls back to the default duration.
+    assert params["install_duration_s"] == {"cart": 5.0, "plow": 10.0}
+    # uninstall has no success_probability/drain_rate overrides of its
+    # own -- still defaults independently of install's own overrides.
+    assert params["uninstall_duration_s"] == {"cart": 10.0, "plow": 7.0}
+    assert params["uninstall_success_probability"] == 0.9
+    assert params["uninstall_drain_rate_pct_s"] == 0.02
+    assert params["install_drain_rate_pct_s"] == 0.03
+    # cart overridden, plow and free fall back to motion.speed/
+    # battery.moving_drain_rate.
+    assert params["speed"] == {"free": 2.0, "cart": 0.5, "plow": 2.0}
+    assert params["moving_drain_rate_pct_s"] == {"free": 0.2, "cart": 0.4, "plow": 0.2}

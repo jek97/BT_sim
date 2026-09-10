@@ -82,6 +82,20 @@ def generate_launch_description():
     battery_moving_drain_rate_pct_s = LaunchConfiguration("battery_moving_drain_rate_pct_s")
     expect_json = LaunchConfiguration("expect_json")
     payload_length_included = LaunchConfiguration("payload_length_included")
+    sample_success_probability = LaunchConfiguration("sample_success_probability")
+    install_duration_cart_s = LaunchConfiguration("install_duration_cart_s")
+    install_duration_plow_s = LaunchConfiguration("install_duration_plow_s")
+    uninstall_duration_cart_s = LaunchConfiguration("uninstall_duration_cart_s")
+    uninstall_duration_plow_s = LaunchConfiguration("uninstall_duration_plow_s")
+    install_success_probability = LaunchConfiguration("install_success_probability")
+    uninstall_success_probability = LaunchConfiguration("uninstall_success_probability")
+    install_drain_rate_pct_s = LaunchConfiguration("install_drain_rate_pct_s")
+    uninstall_drain_rate_pct_s = LaunchConfiguration("uninstall_drain_rate_pct_s")
+    tool_speed_free_mps = LaunchConfiguration("tool_speed_free_mps")
+    tool_speed_cart_mps = LaunchConfiguration("tool_speed_cart_mps")
+    tool_speed_plow_mps = LaunchConfiguration("tool_speed_plow_mps")
+    tool_moving_drain_rate_cart_pct_s = LaunchConfiguration("tool_moving_drain_rate_cart_pct_s")
+    tool_moving_drain_rate_plow_pct_s = LaunchConfiguration("tool_moving_drain_rate_plow_pct_s")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -121,6 +135,23 @@ def generate_launch_description():
         DeclareLaunchArgument("battery_idle_drain_rate_pct_s", default_value="0.01"),
         DeclareLaunchArgument("battery_moving_drain_rate_pct_s", default_value="0.1"),
         DeclareLaunchArgument(
+            "sample_success_probability", default_value="0.5",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- TakeSample's coin-flip probability."),
+        DeclareLaunchArgument("install_duration_cart_s", default_value="10.0"),
+        DeclareLaunchArgument("install_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument("uninstall_duration_cart_s", default_value="10.0"),
+        DeclareLaunchArgument("uninstall_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument("install_success_probability", default_value="0.9"),
+        DeclareLaunchArgument("uninstall_success_probability", default_value="0.9"),
+        DeclareLaunchArgument("install_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("uninstall_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("tool_speed_free_mps", default_value="0.5"),
+        DeclareLaunchArgument("tool_speed_cart_mps", default_value="0.5"),
+        DeclareLaunchArgument("tool_speed_plow_mps", default_value="0.5"),
+        DeclareLaunchArgument("tool_moving_drain_rate_cart_pct_s", default_value="0.1"),
+        DeclareLaunchArgument("tool_moving_drain_rate_plow_pct_s", default_value="0.1"),
+        DeclareLaunchArgument(
             "expect_json", default_value="true",
             description="Forwarded to sim_bringup.launch.py -- set false "
             "for a mission with no second (orchard JSON) frame, e.g. a "
@@ -152,5 +183,19 @@ def generate_launch_description():
             battery_start_percent=battery_start_percent,
             battery_idle_drain_rate_pct_s=battery_idle_drain_rate_pct_s,
             battery_moving_drain_rate_pct_s=battery_moving_drain_rate_pct_s,
+            sample_success_probability=sample_success_probability,
+            install_duration_cart_s=install_duration_cart_s,
+            install_duration_plow_s=install_duration_plow_s,
+            uninstall_duration_cart_s=uninstall_duration_cart_s,
+            uninstall_duration_plow_s=uninstall_duration_plow_s,
+            install_success_probability=install_success_probability,
+            uninstall_success_probability=uninstall_success_probability,
+            install_drain_rate_pct_s=install_drain_rate_pct_s,
+            uninstall_drain_rate_pct_s=uninstall_drain_rate_pct_s,
+            tool_speed_free_mps=tool_speed_free_mps,
+            tool_speed_cart_mps=tool_speed_cart_mps,
+            tool_speed_plow_mps=tool_speed_plow_mps,
+            tool_moving_drain_rate_cart_pct_s=tool_moving_drain_rate_cart_pct_s,
+            tool_moving_drain_rate_plow_pct_s=tool_moving_drain_rate_plow_pct_s,
         ),
     ])

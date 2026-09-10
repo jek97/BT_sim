@@ -4,7 +4,8 @@
 
   A LOCAL COPY of amiga_ros2_behavior_tree/schemas/amiga_btcpp.xsd (the
   gpt-mission-planner-schemas submodule), extended with the problog_project
-  node set this package ports: PlanWith, MoveTo, and every Condition in
+  node set this package ports: PlanWith, MoveTo, TakeSample, InstallTool,
+  UninstallTool, and every Condition in
   problog_project/module/contracts/schema.yaml EXCEPT HaltedWith, which is
   deliberately left out of this schema entirely (not just unimplemented) —
   condition_service_node.py's own module docstring explains why it can never
@@ -125,6 +126,9 @@
             <!-- problog_project additions -->
             <xs:element name="PlanWith" type="planWithType" />
             <xs:element name="MoveTo" type="moveToType" />
+            <xs:element name="TakeSample" type="takeSampleType" />
+            <xs:element name="InstallTool" type="installToolType" />
+            <xs:element name="UninstallTool" type="uninstallToolType" />
         </xs:choice>
     </xs:group>
 
@@ -360,6 +364,54 @@
         <xs:attribute name="control_points" type="portValueType" use="required" />
         <!-- semicolon-separated trigger list, e.g.
              "obstacle_in_bound(0.6);battery_below(20)" -->
+        <xs:attribute name="triggers" type="xs:string" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- TakeSample — instantaneous, no input ports at all (matching
+         schema.yaml's own "deliberately kept to the simplest possible
+         interface"). service_name is fixed, naming amiga_ros2_planners'
+         sample_service_node's own TakeSample service. -->
+    <xs:complexType name="takeSampleType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="service_name" type="xs:string" use="optional"
+            fixed="take_sample" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- InstallTool / UninstallTool — durative, same start/halt shape
+         as MoveTo; the robot never moves during either, so triggers is
+         RESTRICTED to battery-related names only (see
+         amiga_ros2_planners/tool_action_node.py's own
+         TRIGGER_FUNCTOR_TO_CONDITION). action_name is fixed, naming
+         amiga_ros2_planners' tool_action_node's own "install_tool"/
+         "uninstall_tool" actions. -->
+    <xs:simpleType name="toolKindType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="cart" />
+            <xs:enumeration value="plow" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="installToolType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="install_tool" />
+        <xs:attribute name="tool" type="toolKindType" use="required" />
+        <!-- semicolon-separated, battery-only trigger list, e.g.
+             "battery_below(20)" -->
+        <xs:attribute name="triggers" type="xs:string" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <xs:complexType name="uninstallToolType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="uninstall_tool" />
+        <xs:attribute name="tool" type="toolKindType" use="required" />
         <xs:attribute name="triggers" type="xs:string" use="optional" />
         <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />

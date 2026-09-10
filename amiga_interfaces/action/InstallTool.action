@@ -1,0 +1,52 @@
+# InstallTool.action
+#
+# The ROS2-action form of problog_project's InstallTool BT node (see
+# module/contracts/schema.yaml's own InstallTool entry). An action, not
+# a service like TakeSample, because it's DURATIVE -- same start/halt
+# shape as MoveTo.action, a fixed-Duration analogue of one
+# startMoveto/haltMoveto pair, just without the continuous trajectory
+# (the robot never moves during this action).
+#
+# Server: amiga_ros2_planners' tool_action_node, which runs this for
+# `tool`'s own configured Duration (this problem's own config.yaml,
+# tool.install.duration_seconds.<tool>), halting early on whichever of
+# `triggers` fires first (battery-only -- see that port's own
+# description below), or resolving a success/failure coin flip
+# (tool.install.success_probability) once the full Duration elapses
+# with nothing halting it early. On success, tool_action_node updates
+# its own tracked "currently equipped tool" state (published on the
+# latched `tool_state` topic) -- see move_to_node.py's own note on how
+# that changes a SUBSEQUENT MoveTo's speed, and battery_sim_node's own
+# note on how it changes moving_drain_rate.
+
+# "cart" or "plow" -- the ONLY two tool kinds accepted.
+string tool
+
+# EXTRA halting conditions -- OPTIONAL, may be omitted or empty.
+# RESTRICTED to battery-related names ONLY: battery_below(Threshold),
+# battery_equal(Threshold), battery_over(Threshold) (see MoveTo.action's
+# own triggers port for what each means -- identical semantics, just
+# checked against the IDLE drain rate's own reading, since this action
+# never moves the robot). A motion-based name is not supported --
+# tool_action_node ignores it with a warning rather than a hard error,
+# there being no translation-time validation pass in this simulation
+# the way schema.yaml itself describes for the formal ProbLog pipeline.
+string[] triggers
+---
+# Result
+
+# "install_success"/"install_failure" if the full Duration elapsed
+# (matching TakeSample's own bare "sample_success"/"sample_failure"
+# shape, not schema.yaml's literal install_tool_success(Tool,ActionCode)
+# Prolog term text -- same adaptation MoveTo's own "completed" reason
+# already makes), or the name of whichever battery trigger fired first
+# (e.g. "battery_below(20)") if one did.
+string reason
+
+# true iff reason is "install_success".
+bool status
+---
+# Feedback
+
+# Wall-clock seconds elapsed since this action started.
+float64 elapsed_s

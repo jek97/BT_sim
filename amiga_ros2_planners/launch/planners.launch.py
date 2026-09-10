@@ -83,6 +83,60 @@ def generate_launch_description():
         DeclareLaunchArgument("battery_start_percent", default_value="100.0"),
         DeclareLaunchArgument("battery_idle_drain_rate_pct_s", default_value="0.01"),
         DeclareLaunchArgument("battery_moving_drain_rate_pct_s", default_value="0.1"),
+        DeclareLaunchArgument(
+            "sample_success_probability", default_value="0.5",
+            description="TakeSample's own coin-flip probability -- "
+            "problog_problem.sample_params's own config.yaml mapping "
+            "(sample.success_probability)."),
+        DeclareLaunchArgument(
+            "tool_state_topic", default_value="tool_state",
+            description="Latched (TRANSIENT_LOCAL) topic tool_action_node "
+            "publishes its own tracked equipped-tool state on -- "
+            "move_to_node/battery_sim_node both subscribe."),
+        DeclareLaunchArgument(
+            "tool_activity_topic", default_value="tool_activity",
+            description="Latched topic tool_action_node publishes "
+            "\"idle\"/\"installing\"/\"uninstalling\" on -- battery_sim_node "
+            "subscribes, to apply install/uninstall's own drain rate for "
+            "that action's own span."),
+        DeclareLaunchArgument(
+            "controller_server_set_parameters_service",
+            default_value="controller_server/set_parameters",
+            description="move_to_node's own live desired_linear_vel "
+            "override target (see its own _apply_tool_speed)."),
+        DeclareLaunchArgument(
+            "install_duration_cart_s", default_value="10.0",
+            description="problog_problem.tool_params's own "
+            "install_duration_s/uninstall_duration_s dicts, spelled out "
+            "as individual launch args (ros2 launch has no clean way to "
+            "pass a per-tool dict as one argument) -- config.yaml's own "
+            "tool.install.duration_seconds.<tool>/tool.uninstall."
+            "duration_seconds.<tool>."),
+        DeclareLaunchArgument("install_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument("uninstall_duration_cart_s", default_value="10.0"),
+        DeclareLaunchArgument("uninstall_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument("install_success_probability", default_value="0.9"),
+        DeclareLaunchArgument("uninstall_success_probability", default_value="0.9"),
+        DeclareLaunchArgument(
+            "install_drain_rate_pct_s", default_value="0.01",
+            description="config.yaml's own tool.install.drain_rate, "
+            "defaulting to battery_idle_drain_rate_pct_s's own value -- "
+            "see problog_problem.tool_params's own docstring."),
+        DeclareLaunchArgument("uninstall_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument(
+            "tool_speed_free_mps", default_value="0.5",
+            description="config.yaml's own motion.speed / "
+            "tool.equipped.<tool>.speed, applied live to "
+            "controller_server's own desired_linear_vel per walk -- see "
+            "move_to_node.py's own _apply_tool_speed."),
+        DeclareLaunchArgument("tool_speed_cart_mps", default_value="0.5"),
+        DeclareLaunchArgument("tool_speed_plow_mps", default_value="0.5"),
+        DeclareLaunchArgument(
+            "tool_moving_drain_rate_cart_pct_s", default_value="0.1",
+            description="config.yaml's own battery.moving_drain_rate / "
+            "tool.equipped.<tool>.moving_drain_rate -- battery_sim_node's "
+            "own per-tool MoveTo drain rate."),
+        DeclareLaunchArgument("tool_moving_drain_rate_plow_pct_s", default_value="0.1"),
 
         # Pointless (and noisy -- it would wait forever for an orchard
         # JSON that never arrives) in problog_problem mode, where A*
@@ -162,6 +216,12 @@ def generate_launch_description():
                 "samples_per_segment": LaunchConfiguration("samples_per_segment"),
                 "follow_path_action": LaunchConfiguration("follow_path_action"),
                 "controller_id": LaunchConfiguration("controller_id"),
+                "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "controller_server_set_parameters_service": LaunchConfiguration(
+                    "controller_server_set_parameters_service"),
+                "tool_speed_free_mps": LaunchConfiguration("tool_speed_free_mps"),
+                "tool_speed_cart_mps": LaunchConfiguration("tool_speed_cart_mps"),
+                "tool_speed_plow_mps": LaunchConfiguration("tool_speed_plow_mps"),
             }],
         ),
         Node(
@@ -178,6 +238,45 @@ def generate_launch_description():
                     "battery_idle_drain_rate_pct_s"),
                 "moving_drain_rate_pct_s": LaunchConfiguration(
                     "battery_moving_drain_rate_pct_s"),
+                "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "tool_activity_topic": LaunchConfiguration("tool_activity_topic"),
+                "tool_moving_drain_rate_cart_pct_s": LaunchConfiguration(
+                    "tool_moving_drain_rate_cart_pct_s"),
+                "tool_moving_drain_rate_plow_pct_s": LaunchConfiguration(
+                    "tool_moving_drain_rate_plow_pct_s"),
+                "install_drain_rate_pct_s": LaunchConfiguration(
+                    "install_drain_rate_pct_s"),
+                "uninstall_drain_rate_pct_s": LaunchConfiguration(
+                    "uninstall_drain_rate_pct_s"),
+            }],
+        ),
+        Node(
+            package="amiga_ros2_planners",
+            executable="sample_service",
+            name="sample_service_node",
+            namespace=namespace,
+            output="screen",
+            parameters=[{
+                "success_probability": LaunchConfiguration("sample_success_probability"),
+            }],
+        ),
+        Node(
+            package="amiga_ros2_planners",
+            executable="tool_action",
+            name="tool_action_node",
+            namespace=namespace,
+            output="screen",
+            parameters=[{
+                "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "tool_activity_topic": LaunchConfiguration("tool_activity_topic"),
+                "install_duration_cart_s": LaunchConfiguration("install_duration_cart_s"),
+                "install_duration_plow_s": LaunchConfiguration("install_duration_plow_s"),
+                "uninstall_duration_cart_s": LaunchConfiguration("uninstall_duration_cart_s"),
+                "uninstall_duration_plow_s": LaunchConfiguration("uninstall_duration_plow_s"),
+                "install_success_probability": LaunchConfiguration(
+                    "install_success_probability"),
+                "uninstall_success_probability": LaunchConfiguration(
+                    "uninstall_success_probability"),
             }],
         ),
     ])

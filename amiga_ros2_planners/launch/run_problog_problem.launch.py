@@ -78,6 +78,8 @@ def launch_setup(context, *args, **kwargs):
     config = problog_problem.load_config(problem_dir)
     origin_x, origin_y, yaw_deg = problog_problem.compute_frame_origin(config)
     battery = problog_problem.battery_params(config)
+    sample = problog_problem.sample_params(config)
+    tool = problog_problem.tool_params(config)
 
     problem_name = os.path.basename(os.path.normpath(problem_dir)) or "problog_problem"
     tree_path = os.path.join(problem_dir, "behavior_tree.xml")
@@ -106,6 +108,20 @@ def launch_setup(context, *args, **kwargs):
             "battery_start_percent": str(battery["start_percent"]),
             "battery_idle_drain_rate_pct_s": str(battery["idle_drain_rate_pct_s"]),
             "battery_moving_drain_rate_pct_s": str(battery["moving_drain_rate_pct_s"]),
+            "sample_success_probability": str(sample["success_probability"]),
+            "install_duration_cart_s": str(tool["install_duration_s"]["cart"]),
+            "install_duration_plow_s": str(tool["install_duration_s"]["plow"]),
+            "uninstall_duration_cart_s": str(tool["uninstall_duration_s"]["cart"]),
+            "uninstall_duration_plow_s": str(tool["uninstall_duration_s"]["plow"]),
+            "install_success_probability": str(tool["install_success_probability"]),
+            "uninstall_success_probability": str(tool["uninstall_success_probability"]),
+            "install_drain_rate_pct_s": str(tool["install_drain_rate_pct_s"]),
+            "uninstall_drain_rate_pct_s": str(tool["uninstall_drain_rate_pct_s"]),
+            "tool_speed_free_mps": str(tool["speed"]["free"]),
+            "tool_speed_cart_mps": str(tool["speed"]["cart"]),
+            "tool_speed_plow_mps": str(tool["speed"]["plow"]),
+            "tool_moving_drain_rate_cart_pct_s": str(tool["moving_drain_rate_pct_s"]["cart"]),
+            "tool_moving_drain_rate_plow_pct_s": str(tool["moving_drain_rate_pct_s"]["plow"]),
             "expect_json": "false",
             "payload_length_included": "false",
         }.items(),

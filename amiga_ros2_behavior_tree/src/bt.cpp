@@ -25,6 +25,9 @@
 #include "amiga_ros2_behavior_tree/actions/plan_with.hpp"
 #include "amiga_ros2_behavior_tree/actions/move_to.hpp"
 #include "amiga_ros2_behavior_tree/actions/evaluate_conditions.hpp"
+#include "amiga_ros2_behavior_tree/actions/take_sample.hpp"
+#include "amiga_ros2_behavior_tree/actions/install_tool.hpp"
+#include "amiga_ros2_behavior_tree/actions/uninstall_tool.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -149,6 +152,30 @@ int main(int argc, char **argv) {
   condition_params.wait_for_server_timeout = backend_timeout;
   condition_params.server_timeout = backend_timeout;
 
+  // sample_service_node.py's own "take_sample" service, like move_to_node's
+  // "move_to" action, is advertised immediately at startup (no pose/battery
+  // wait of its own) -- the library default is the right choice here, no
+  // MoveTo-style backend_timeout/tuned-watchdog override needed.
+  RosNodeParams sample_params = ros_params;
+  sample_params.default_port_value = "take_sample";
+
+  // tool_action_node.py's own "install_tool"/"uninstall_tool" actions are
+  // ALSO advertised immediately at startup, same as "move_to" -- but they
+  // share the exact same rclpy ActionServer-per-goal-name serialization
+  // MoveTo's own server_timeout fix addressed (see move_to_params's own
+  // comment above): a goal on either action right after a PRECEDING goal
+  // on that SAME action was cancelled won't start producing feedback until
+  // that previous execute() callback fully returns. Same 5s budget as
+  // MoveTo, same reasoning, applied proactively rather than waiting to
+  // reproduce the identical failure.
+  auto tool_action_timeout = std::chrono::milliseconds(5000);
+  RosNodeParams install_tool_params = ros_params;
+  install_tool_params.default_port_value = "install_tool";
+  install_tool_params.server_timeout = tool_action_timeout;
+  RosNodeParams uninstall_tool_params = ros_params;
+  uninstall_tool_params.default_port_value = "uninstall_tool";
+  uninstall_tool_params.server_timeout = tool_action_timeout;
+
   factory.registerNodeType<PlanWith>("PlanWith", plan_params);
   factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
   factory.registerNodeType<DistanceBelow>("DistanceBelow", condition_params);
@@ -160,6 +187,9 @@ int main(int argc, char **argv) {
   factory.registerNodeType<BatteryEqual>("BatteryEqual", condition_params);
   factory.registerNodeType<BatteryOver>("BatteryOver", condition_params);
   factory.registerNodeType<LineOfSightClear>("LineOfSightClear", condition_params);
+  factory.registerNodeType<TakeSample>("TakeSample", sample_params);
+  factory.registerNodeType<InstallTool>("InstallTool", install_tool_params);
+  factory.registerNodeType<UninstallTool>("UninstallTool", uninstall_tool_params);
 
   std::string schema_path;
   try {

@@ -61,6 +61,9 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from nav2_msgs.action import FollowPath
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
+from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
 from amiga_interfaces.srv import EvaluateCondition
@@ -117,6 +120,23 @@ class MoveToNode(Node):
         self.declare_parameter("max_walk_duration_s", 120.0)
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter("controller_id", "")
+        # tool_action_node's own tracked "currently equipped tool"
+        # changes this walk's own desired speed -- config.yaml's
+        # tool.equipped.<tool>.speed (problog_problem.tool_params's own
+        # "speed" dict; "free" is motion.speed itself, same "no
+        # separate key for no tool" convention that function's own
+        # docstring explains). Applied via a LIVE parameter set on
+        # controller_server before each goal (see _apply_tool_speed
+        # below) -- FollowPath.action itself has no per-goal speed
+        # field, so this is the only way to change it at runtime short
+        # of editing nav2_params.yaml and restarting the stack.
+        self.declare_parameter("tool_speed_free_mps", 0.5)
+        self.declare_parameter("tool_speed_cart_mps", 0.5)
+        self.declare_parameter("tool_speed_plow_mps", 0.5)
+        self.declare_parameter(
+            "controller_server_set_parameters_service",
+            "controller_server/set_parameters")
+        self.declare_parameter("tool_state_topic", "tool_state")
 
         # local_costmap (which controller_server's FollowPath needs a
         # working state estimate to run against) looks up base_link->odom,
@@ -163,6 +183,19 @@ class MoveToNode(Node):
             callback_group=self._cb_group)
         self._condition_client = self.create_client(
             EvaluateCondition, "evaluate_condition", callback_group=self._cb_group)
+        self._set_params_client = self.create_client(
+            SetParameters,
+            self.get_parameter("controller_server_set_parameters_service").value,
+            callback_group=self._cb_group)
+
+        # "free" is tool_action_node's own initial state and its own
+        # first (latched) publish -- correct default even if this node
+        # subscribes before tool_action_node exists at all (no
+        # InstallTool/UninstallTool in this mission's own tree).
+        self._equipped_tool = "free"
+        self.create_subscription(
+            String, self.get_parameter("tool_state_topic").value,
+            self._on_tool_state, 10, callback_group=self._cb_group)
 
         self._action_server = ActionServer(
             self, MoveTo, "move_to", self._execute,
@@ -170,6 +203,40 @@ class MoveToNode(Node):
             callback_group=self._cb_group)
 
         self.get_logger().info("move_to_node ready on 'move_to'")
+
+    def _on_tool_state(self, msg):
+        self._equipped_tool = msg.data
+
+    def _apply_tool_speed(self, controller_id):
+        """Best-effort: sets <controller>.desired_linear_vel on
+        controller_server to this walk's own tool-appropriate speed
+        (see the constructor's own comment on tool_speed_*_mps).
+        Never aborts the walk over this -- a speed override that
+        doesn't take (service not up yet, wrong controller_id, an
+        older Nav2 without this exact param name) just means the walk
+        runs at whatever speed controller_server was already
+        configured with, not a reason to fail the whole action."""
+        speed = {
+            "free": self.get_parameter("tool_speed_free_mps").value,
+            "cart": self.get_parameter("tool_speed_cart_mps").value,
+            "plow": self.get_parameter("tool_speed_plow_mps").value,
+        }.get(self._equipped_tool)
+        if speed is None:
+            return
+        if not self._set_params_client.service_is_ready():
+            self.get_logger().warn(
+                "move_to_node: controller_server's set_parameters "
+                "service not ready, walking at whatever speed it's "
+                "already configured with")
+            return
+        controller_name = controller_id or "FollowPath"
+        param = Parameter()
+        param.name = f"{controller_name}.desired_linear_vel"
+        param.value = ParameterValue(
+            type=ParameterType.PARAMETER_DOUBLE, double_value=float(speed))
+        request = SetParameters.Request(parameters=[param])
+        future = self._set_params_client.call_async(request)
+        self._wait_for_future(future, timeout_sec=1.0)
 
     def _parse_triggers(self, triggers):
         parsed = []
@@ -278,6 +345,8 @@ class MoveToNode(Node):
         controller_id = self.get_parameter("controller_id").value
         if controller_id:
             follow_goal.controller_id = controller_id
+
+        self._apply_tool_speed(controller_id)
 
         # wait_for_server only confirms the action is visible on the ROS
         # graph, which for a Nav2 lifecycle node (controller_server) can be

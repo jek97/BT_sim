@@ -1,0 +1,24 @@
+# TakeSample.srv
+#
+# The ROS2-service form of problog_project's TakeSample BT node (see
+# module/contracts/schema.yaml's own TakeSample entry). A service, not
+# an action, because it's INSTANTANEOUS -- a single fixed-probability
+# coin flip, same "no Duration/Triggers, no continuous trajectory"
+# shape as PlanPath.srv, not a durative walk like MoveTo.action/
+# InstallTool.action/UninstallTool.action.
+#
+# No request fields at all -- schema.yaml's own TakeSample has no input
+# ports either ("deliberately kept to the simplest possible interface").
+# success_probability (this problem's own config.yaml,
+# sample.success_probability) is a ROS param on sample_service_node's
+# own side, not a per-call argument -- same convention plan_service_node/
+# condition_service_node already use for problog_frame_origin_x/y etc.
+---
+# One of "sample_success"/"sample_failure" -- matches
+# problog_project/module/contracts/bt_actions.py's own bt_take_sample
+# reference implementation's reason strings EXACTLY (a single
+# random.random() < success_probability draw, no approximation).
+string reason
+
+# true iff reason is "sample_success".
+bool status

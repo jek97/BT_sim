@@ -32,6 +32,12 @@
        MoveTo's low-level trajectory-following primitive. -->
   <depend>nav2_msgs</depend>
 
+  <!-- move_to_node's own set_parameters call to controller_server, live
+       per-walk desired_linear_vel override for InstallTool/UninstallTool's
+       own tool_speed_* effect -- see move_to_node.py's own
+       _apply_tool_speed. -->
+  <depend>rcl_interfaces</depend>
+
   <!-- Reads the same tree-info JSON topic orchard_management_node caches
        (see amiga_ros2_behavior_tree/src/orchard_management.cpp): runtime
        coupling, not a build dependency on that package's own code. -->

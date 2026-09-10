@@ -132,3 +132,90 @@ def battery_params(config):
         "idle_drain_rate_pct_s": float(battery.get("idle_drain_rate", 0.01)),
         "moving_drain_rate_pct_s": float(battery.get("moving_drain_rate", 0.1)),
     }
+
+
+_TOOL_KINDS = ("cart", "plow")
+_DEFAULT_TOOL_DURATION_S = 10.0
+_DEFAULT_TOOL_SUCCESS_PROBABILITY = 0.9
+
+
+def sample_params(config):
+    """{success_probability} for sample_service_node's own TakeSample
+    backend, from config.yaml's own sample.success_probability -- same
+    1:1 mapping and 0.5 default as
+    module/translators/config_to_prolog.py's own render_prolog (the
+    ProbLog-facing counterpart of this same knob)."""
+    return {
+        "success_probability": float(
+            config.get("sample", {}).get("success_probability", 0.5)),
+    }
+
+
+def tool_params(config):
+    """Every config.yaml knob tool_action_node/move_to_node/
+    battery_sim_node need for InstallTool/UninstallTool and their
+    effect on a SUBSEQUENT MoveTo -- mirrors
+    module/translators/config_to_prolog.py's own render_prolog (the
+    ProbLog-facing counterpart of every one of these) key-for-key, same
+    per-tool-independent-default style throughout:
+
+      install_duration_s/uninstall_duration_s: {cart, plow} seconds,
+        from tool.install.duration_seconds.<tool>/tool.uninstall.
+        duration_seconds.<tool>, each defaulting independently to
+        _DEFAULT_TOOL_DURATION_S if its own key (or the whole tool:
+        section) is missing.
+      install_success_probability/uninstall_success_probability: from
+        tool.install.success_probability/tool.uninstall.
+        success_probability, defaulting to
+        _DEFAULT_TOOL_SUCCESS_PROBABILITY.
+      install_drain_rate_pct_s/uninstall_drain_rate_pct_s: from
+        tool.install.drain_rate/tool.uninstall.drain_rate, defaulting to
+        battery.idle_drain_rate (config_to_prolog.py's own "a problem
+        with no tool: section at all keeps behaving exactly as before"
+        rationale).
+      speed/moving_drain_rate_pct_s: {free, cart, plow}, from
+        tool.equipped.<tool>.speed/.moving_drain_rate, each tool
+        defaulting INDEPENDENTLY to motion.speed/battery.
+        moving_drain_rate if its own key is missing -- free ALWAYS
+        equals the base value (there is no config.yaml key for "no
+        tool equipped", same as config_to_prolog.py's own
+        tool_speed(free,_)/tool_moving_drain_rate(free,_) facts)."""
+    battery = config.get("battery", {})
+    motion = config.get("motion", {})
+    install_cfg = config.get("tool", {}).get("install", {})
+    uninstall_cfg = config.get("tool", {}).get("uninstall", {})
+    equipped_cfg = config.get("tool", {}).get("equipped", {})
+
+    install_duration_cfg = install_cfg.get("duration_seconds", {})
+    uninstall_duration_cfg = uninstall_cfg.get("duration_seconds", {})
+
+    base_speed = float(motion.get("speed", 1.0))
+    base_moving_drain_rate = float(battery.get("moving_drain_rate", 0.1))
+    idle_drain_rate = float(battery.get("idle_drain_rate", 0.01))
+
+    return {
+        "install_duration_s": {
+            tool: float(install_duration_cfg.get(tool, _DEFAULT_TOOL_DURATION_S))
+            for tool in _TOOL_KINDS
+        },
+        "uninstall_duration_s": {
+            tool: float(uninstall_duration_cfg.get(tool, _DEFAULT_TOOL_DURATION_S))
+            for tool in _TOOL_KINDS
+        },
+        "install_success_probability": float(
+            install_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
+        "uninstall_success_probability": float(
+            uninstall_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
+        "install_drain_rate_pct_s": float(install_cfg.get("drain_rate", idle_drain_rate)),
+        "uninstall_drain_rate_pct_s": float(uninstall_cfg.get("drain_rate", idle_drain_rate)),
+        "speed": {
+            "free": base_speed,
+            **{tool: float(equipped_cfg.get(tool, {}).get("speed", base_speed))
+               for tool in _TOOL_KINDS},
+        },
+        "moving_drain_rate_pct_s": {
+            "free": base_moving_drain_rate,
+            **{tool: float(equipped_cfg.get(tool, {}).get("moving_drain_rate", base_moving_drain_rate))
+               for tool in _TOOL_KINDS},
+        },
+    }

@@ -1,0 +1,27 @@
+# UninstallTool.action
+#
+# The mirror image of InstallTool.action -- same ports/mechanism, see
+# that file's own header for the full story. Requires `tool` to be the
+# tool CURRENTLY equipped (tool_action_node's own tracked state); on
+# success, tool_action_node's tracked tool reverts to "free".
+
+# "cart" or "plow" -- must be the tool CURRENTLY equipped.
+string tool
+
+# Same battery-only restriction as InstallTool.action's own triggers port.
+string[] triggers
+---
+# Result
+
+# "uninstall_success"/"uninstall_failure" if the full Duration elapsed,
+# or a battery trigger's own name -- same shape as InstallTool.action's
+# own reason port.
+string reason
+
+# true iff reason is "uninstall_success".
+bool status
+---
+# Feedback
+
+# Wall-clock seconds elapsed since this action started.
+float64 elapsed_s
