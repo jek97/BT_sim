@@ -239,7 +239,20 @@ def launch_setup(context, *args, **kwargs):
     gazebo = ExecuteProcess(
         cmd=gz_cmd,
         output="screen",
-        additional_env={"IGN_GAZEBO_SYSTEM_PLUGIN_PATH": "/opt/ros/humble/lib"},
+        additional_env={
+            "IGN_GAZEBO_SYSTEM_PLUGIN_PATH": "/opt/ros/humble/lib",
+            # Lets the GUI's Resource Spawner panel list models/house,
+            # models/fence, etc. (needs each to have its own model.config).
+            # Ignition Fortress reads IGN_GAZEBO_RESOURCE_PATH; GZ_SIM_RESOURCE_PATH
+            # is set alongside it since some Fortress patch releases also honor
+            # the newer Gazebo name.
+            "IGN_GAZEBO_RESOURCE_PATH": os.path.join(
+                get_package_share_directory("amiga_ros2_gazebo"), "models"
+            ),
+            "GZ_SIM_RESOURCE_PATH": os.path.join(
+                get_package_share_directory("amiga_ros2_gazebo"), "models"
+            ),
+        },
     )
 
     def spawner(controller, ns):
