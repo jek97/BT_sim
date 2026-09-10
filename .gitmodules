@@ -7,3 +7,7 @@
 [submodule "ros2-kortex-control"]
 	path = ros2-kortex-control
 	url = https://github.com/ucmercedrobotics/ros2-kortex-control.git
+[submodule "problog_project"]
+	path = problog_project
+	url = https://github.com/jek97/BT_project.git
+	branch = claude/project-review-179rmx
