@@ -1,6 +1,7 @@
 #include <behaviortree_cpp/bt_factory.h>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <rclcpp/rclcpp.hpp>
@@ -21,6 +22,9 @@
 #include "amiga_ros2_behavior_tree/actions/sample_leaf.hpp"
 #include "amiga_ros2_behavior_tree/actions/follow_person.hpp"
 #include "amiga_ros2_behavior_tree/actions/arm_move_to.hpp"
+#include "amiga_ros2_behavior_tree/actions/plan_with.hpp"
+#include "amiga_ros2_behavior_tree/actions/move_to.hpp"
+#include "amiga_ros2_behavior_tree/actions/evaluate_conditions.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -73,6 +77,89 @@ int main(int argc, char **argv) {
   // conditional nodes
   factory.registerNodeType<AssertTrue>("AssertTrue");
   factory.registerNodeType<CheckValue>("CheckValue");
+
+  // problog_project-ported nodes -- ROS2 service/action backends in
+  // amiga_ros2_planners (plan_service_node/move_to_node/
+  // condition_service_node); see that package's own README for what
+  // each one does and doesn't carry over from problog_project's own
+  // semantics. HaltedWith has no leaf here on purpose -- see
+  // evaluate_condition_base.hpp's own header.
+  //
+  // Unlike the pre-existing leaves above, problog-derived mission XML
+  // never carries a literal service_name/action_name attribute (that's
+  // not a concept in problog_project's own schema), so each of these
+  // needs its own RosNodeParams with default_port_value set to the
+  // fixed service/action name its Python backend actually advertises
+  // (plan_service_node.py/move_to_node.py/condition_service_node.py) --
+  // otherwise RosServiceNode/RosActionNode has no client to dial and
+  // throws at tick time.
+  // plan_service_node.py/condition_service_node.py deliberately delay
+  // advertising plan_path/evaluate_condition until they have a real tf2
+  // pose (and, for evaluate_condition, a first battery reading) -- see
+  // their own PoseProvider.wait_ready() comments -- which can take
+  // several seconds past this node's own startup while Gazebo/Nav2 are
+  // still coming up. RosNodeParams' own default timeouts (the
+  // service/action-existence check done once at tree-construction
+  // time, wait_for_server_timeout, and the per-call response wait,
+  // server_timeout) are far shorter than that, so createTreeFromText
+  // would otherwise log "Service ... is not reachable" and hand back a
+  // never-connected client -- the first real tick then hits onFailure
+  // and fails BatteryOver/PlanWith outright on a startup race, not a
+  // real condition/plan answer, which can steer an entire plain
+  // Fallback down the wrong branch before its backend ever got a
+  // chance to answer for real. Give these two (PlanWith, the
+  // condition leaves -- NOT MoveTo, see its own comment below) the
+  // same generous budget the Python side already waits up to (set
+  // both timeout
+  // fields since it's the existence check, wait_for_server_timeout,
+  // that this specific error comes from, but a slow first response
+  // right after startup is plausible too).
+  auto backend_timeout = std::chrono::milliseconds(30000);
+
+  RosNodeParams plan_params = ros_params;
+  plan_params.default_port_value = "plan_path";
+  plan_params.wait_for_server_timeout = backend_timeout;
+  plan_params.server_timeout = backend_timeout;
+  // move_to_node.py's own "move_to" ActionServer, unlike plan_path/
+  // evaluate_condition, is advertised immediately at startup (its own
+  // pose wait happens later, per-goal, inside _execute() -- see that
+  // file's own comment) -- it never needed the 30s budget above, and
+  // RosActionNode's server_timeout doubles as its no-feedback
+  // watchdog, so 30s here meant every BatteryOver-triggered cancel
+  // took a full 30 real seconds to resolve before the outer Fallback
+  // could ever reach GoHome.
+  //
+  // The library's own DEFAULT (1s) turned out to be the opposite
+  // mistake: rclpy's ActionServer (move_to_node.py) does not start
+  // executing a NEW goal until the PREVIOUS one's own execute()
+  // callback has fully returned, and that can legitimately take
+  // close to a second after a cancel (move_to_node.py's own
+  // cancel_goal_async + get_result_async waits, now capped at 2s
+  // each). GoHome's very next MoveTo goal was hitting bt.cpp's 1s
+  // watchdog before move_to_node.py had even started producing
+  // feedback for it -- "BT fault: MoveTo (MoveTo) failed" with no
+  // controller_server activity at all. 5s comfortably covers that
+  // worst-case serialized handoff while still catching a genuinely
+  // stuck walk far sooner than the mistaken 30s did.
+  RosNodeParams move_to_params = ros_params;
+  move_to_params.default_port_value = "move_to";
+  move_to_params.server_timeout = std::chrono::milliseconds(5000);
+  RosNodeParams condition_params = ros_params;
+  condition_params.default_port_value = "evaluate_condition";
+  condition_params.wait_for_server_timeout = backend_timeout;
+  condition_params.server_timeout = backend_timeout;
+
+  factory.registerNodeType<PlanWith>("PlanWith", plan_params);
+  factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
+  factory.registerNodeType<DistanceBelow>("DistanceBelow", condition_params);
+  factory.registerNodeType<DistanceEqual>("DistanceEqual", condition_params);
+  factory.registerNodeType<DistanceOver>("DistanceOver", condition_params);
+  factory.registerNodeType<ObstacleInBound>("ObstacleInBound", condition_params);
+  factory.registerNodeType<ObstacleOnPath>("ObstacleOnPath", condition_params);
+  factory.registerNodeType<BatteryBelow>("BatteryBelow", condition_params);
+  factory.registerNodeType<BatteryEqual>("BatteryEqual", condition_params);
+  factory.registerNodeType<BatteryOver>("BatteryOver", condition_params);
+  factory.registerNodeType<LineOfSightClear>("LineOfSightClear", condition_params);
 
   std::string schema_path;
   try {

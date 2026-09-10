@@ -27,13 +27,27 @@ RUN apt-get update && apt-get install -y git wget curl python3-full python3-pip 
 # installs libbehaviortree_cpp.so* into the multiarch lib dir
 # (lib/<arch>-linux-gnu), but its own ament export's find_library() call has
 # no LIBRARY_DIRS and only searches the flat lib/, so find_package() for it
-# fails downstream (behaviortree_ros2 and this repo's amiga_ros2_behavior_tree
-# both hit this). Safe once upstream fixes this -- the glob matches nothing
-# and the symlink step is a no-op. Same fix as scripts/ci/build_underlay.sh.
+# fails downstream (behaviortree_ros2 and every package depending on it, this
+# repo's own amiga_ros2_behavior_tree and ros2-kortex-control's kortex_bt
+# included, both hit this). Safe once upstream fixes this -- the glob then
+# matches nothing and the loop body never runs.
+#
+# A `for`/`[ -e ]` loop, NOT `compgen -G` (scripts/ci/build_underlay.sh's own
+# approach, which only works there because that script has a `#!/bin/bash`
+# shebang and is invoked directly): Docker's RUN always executes via
+# `/bin/sh -c`, which on this (Debian-based) image is dash, not bash --
+# `compgen` is a bash builtin with no dash equivalent, so under `sh -c` the
+# `if compgen ...; then` line silently evaluates to "command not found" (a
+# non-zero exit), the `if` treats that as false, and the whole symlink step
+# was a no-op on EVERY build with no error raised -- exactly the failure
+# this fix is for, just never actually applied. A `for f in pattern; do
+# [ -e "$f" ] && ...; done` loop is POSIX/dash-safe: an unmatched glob stays
+# literal, `[ -e ]` on a literal non-existent path is simply false, so it
+# degrades to a correct no-op instead of a silent bash-only no-op.
 RUN arch_lib="/opt/ros/${ROS_DISTRO}/lib/$(uname -m)-linux-gnu" && \
-    if compgen -G "$arch_lib"/libbehaviortree_cpp*.so* > /dev/null; then \
-        ln -sf "$arch_lib"/libbehaviortree_cpp*.so* "/opt/ros/${ROS_DISTRO}/lib/"; \
-    fi
+    for so_file in "$arch_lib"/libbehaviortree_cpp*.so*; do \
+        [ -e "$so_file" ] && ln -sf "$so_file" "/opt/ros/${ROS_DISTRO}/lib/"; \
+    done; true
 
 # The SPIN model checker, used by amiga_ros2_agents/verification/verify.py to re-verify a
 # replanned mission. Same script CI runs, so both environments get the same

@@ -1,0 +1,53 @@
+# EvaluateCondition.srv
+#
+# One consolidated service covering every problog_project Condition node
+# EXCEPT HaltedWith -- DistanceBelow/Equal/Over, ObstacleInBound/OnPath,
+# BatteryBelow/Equal/Over, LineOfSightClear (see
+# problog_project/module/contracts/schema.yaml for each one's own
+# semantics). Same "one node, several functors sharing one shape" idea
+# schema.yaml itself groups these nine under, and the same consolidation
+# PlanPath.srv already applies to the four planning algorithms.
+#
+# HaltedWith is deliberately NOT covered here: it asks whether a
+# PREVIOUS leg/planning call in THIS TREE's own history ended with a
+# given reason, which is blackboard/tree-local state this service has
+# no access to -- not something a stateless ROS service can answer, and
+# something a future BT.cpp HaltedWith node should instead implement by
+# reading its own tree's blackboard directly.
+#
+# Server: amiga_ros2_planners' condition_service_node. Every check reads
+# the robot's CURRENT state at call time (tf2 pose, the orchard's own
+# tree list, the simulated battery topic) -- see that node's own module
+# docstring for exactly where each condition's inputs come from.
+
+# One of: "DistanceBelow", "DistanceEqual", "DistanceOver",
+# "ObstacleInBound", "ObstacleOnPath", "BatteryBelow", "BatteryEqual",
+# "BatteryOver", "LineOfSightClear" -- selects which fields below are
+# actually used, mirroring each condition's own ports in schema.yaml.
+string condition
+
+# Distance* / LineOfSightClear: the point to check against, world/map
+# frame metres. Unused by Obstacle*/Battery*.
+float64 goal_x
+float64 goal_y
+
+# Distance* / ObstacleInBound / ObstacleOnPath: metres.
+# Battery*: percent, 0-100.
+float64 threshold
+
+# LineOfSightClear: which tree to check occlusion against. Matches
+# orchard_obstacles.py's "tree_<tree_index>" id convention.
+string obstacle_id
+
+---
+# Response
+
+# The condition's truth value.
+bool result
+
+# Empty on an ordinary result. Set only when `result` is false because
+# the check itself could not be performed (e.g. no tf2 pose yet, no
+# battery reading yet, or obstacle_id names no known tree) rather than
+# because the condition was genuinely false -- so a caller that needs to
+# tell "false" from "couldn't tell" can.
+string reason

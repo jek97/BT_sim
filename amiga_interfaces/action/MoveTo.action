@@ -1,0 +1,50 @@
+# MoveTo.action
+#
+# The ROS2-action form of problog_project's MoveTo BT node (see
+# module/contracts/schema.yaml's own MoveTo entry). An action, not a
+# service like PlanPath/EvaluateCondition, because a walk is durative --
+# it runs for a real duration and must be cancellable mid-flight (a
+# trigger firing, per the Goal's own `triggers` list, ends it before
+# natural completion) -- exactly the "one startMoveto/haltMoveto pair
+# run to its halt" contract schema.yaml itself describes.
+#
+# Server: amiga_ros2_planners' move_to_node, which samples `control_points`
+# (typically PlanPath's own output, via the shared blackboard-key
+# convention a future BT.cpp MoveTo leaf would carry over from PlanWith)
+# into a nav_msgs/Path and drives it through Nav2's own controller_server
+# FollowPath action -- see move_to_node.py's own module docstring for
+# the full translation and for which trigger functors are actually
+# checked (a real subset of schema.yaml's own vocabulary; see that
+# file's own header).
+
+# Chained cubic Bezier control points (length 3k+1), the SAME format
+# PlanPath.srv's own control_points response carries.
+geometry_msgs/Point[] control_points
+
+# Semicolon-free list here (unlike the XML attribute's own
+# semicolon-separated string form) -- one functor-call string per entry,
+# e.g. ["obstacle_in_bound(0.6)", "battery_below(20)"]. See
+# move_to_node.py's own TRIGGER_PATTERN for exactly which functors are
+# supported today.
+string[] triggers
+---
+# Result
+
+# One of: "completed" (FollowPath ran to natural completion), the name
+# of whichever trigger fired first (e.g. "obstacle_in_bound(0.6)"), or
+# "aborted"/"canceled" for anything else that ended the walk early.
+string reason
+
+# true iff reason is "completed" -- mirrors MoveTo's own status port
+# in schema.yaml exactly (says nothing about final position accuracy;
+# pair with EvaluateCondition's DistanceBelow after this action
+# completes, same as problog_project's own tree does with its
+# DistanceBelow condition node).
+bool status
+---
+# Feedback
+
+# Straight-line distance from the robot's current position to the
+# path's own final control point, metres -- forwarded from Nav2's own
+# FollowPath feedback of the same name.
+float64 distance_to_goal

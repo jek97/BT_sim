@@ -47,6 +47,10 @@ add_executable(bt_runner
   src/actions/follow_person.cpp
   src/actions/orient_robot_heading.cpp
   src/actions/arm_move_to.cpp
+  src/actions/plan_with.cpp
+  src/actions/move_to.cpp
+  src/actions/evaluate_condition_base.cpp
+  src/actions/evaluate_conditions.cpp
 )
 
 add_executable(dummy_wp_server src/mocks/dummy_wp_server.cpp)
@@ -75,6 +79,7 @@ ament_target_dependencies(bt_runner
   amiga_navigation_interfaces
   amiga_interfaces
   kortex_interfaces
+  geometry_msgs
   sensor_msgs
   std_msgs
   tf2

@@ -1,0 +1,461 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  amiga_btcpp_planners.xsd
+
+  A LOCAL COPY of amiga_ros2_behavior_tree/schemas/amiga_btcpp.xsd (the
+  gpt-mission-planner-schemas submodule), extended with the problog_project
+  node set this package ports: PlanWith, MoveTo, and every Condition in
+  problog_project/module/contracts/schema.yaml EXCEPT HaltedWith, which is
+  deliberately left out of this schema entirely (not just unimplemented) —
+  condition_service_node.py's own module docstring explains why it can never
+  be a stateless-service condition at all (it needs a tree's own blackboard
+  history), so there is no point accepting it as valid XML here either; a
+  mission using it should fail xml_validation now rather than parse and only
+  fail later when nothing can answer it.
+
+  Why a COPY instead of an edit to the submodule in place: that schema is
+  vendored from a separate, externally-owned repository
+  (github.com/ucmercedrobotics/gpt-mission-planner-schemas) this project
+  has no push access to — editing it in place would produce a change
+  nobody could commit upstream. Point bt_runner at this file INSTEAD of
+  the submodule's own default for any mission that uses these new nodes:
+
+      ros2 launch amiga_ros2_behavior_tree bt.launch.py \
+          mission_schema:=$(ros2 pkg prefix amiga_ros2_planners)/share/amiga_ros2_planners/schemas/amiga_btcpp_planners.xsd
+
+  A mission that uses ONLY the original node set still validates fine
+  against this file — every original element/type below is unchanged,
+  copied verbatim from the submodule's own amiga_btcpp.xsd.
+
+  Two additions beyond the new leaf types themselves:
+    - ConditionGroup, unused (and commented out) in the base schema, is
+      enabled and added to BTNodeType's own choice — problog_project's
+      own behavior_tree.xml nests a Condition (DistanceBelow) directly
+      inside a Sequence alongside actions, which the base schema's
+      action-only BTNodeType has no room for.
+    - portValueType: a deliberately permissive xs:string for every new
+      port that can carry EITHER a literal value (e.g. goal="11.675;11.525")
+      OR a blackboard reference (e.g. control_points="{cp}", BT.cpp's own
+      convention for a port bound to another node's output) — see
+      problog_project/module/contracts/schema.yaml's own note on this
+      convention. blackboardValueType alone (already in the base schema)
+      would reject the literal form; xs:decimal/xs:string alone would
+      reject the blackboard form.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+    <!-- Root element -->
+    <xs:element name="root">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="Mission" type="xs:string" minOccurs="1" />
+                <xs:element ref="BehaviorTree" maxOccurs="unbounded" />
+                <!-- Optional trailing TreeNodesModel (standard BT.cpp v4
+                     Groot-editor metadata; problog_project's own trees
+                     include one, this repo's own examples never have).
+                     Contents deliberately unvalidated (xs:any, skip),
+                     since it's tooling metadata bt_runner itself never
+                     reads, not something worth a strict schema for. -->
+                <xs:element ref="TreeNodesModel" minOccurs="0" />
+            </xs:sequence>
+            <xs:attribute name="BTCPP_format" type="xs:integer" use="required" />
+            <xs:attribute name="schema_location" type="xs:string" use="required" />
+            <!-- Accepted (not required) so a problog_project tree's own root
+                 tag, vanilla BT.cpp's own <root BTCPP_format="4"
+                 main_tree_to_execute="MainTree"> convention (see
+                 scripts/adapt_problog_tree.py), needs no attribute
+                 STRIPPED, only Mission/schema_location ADDED, to validate
+                 here. Genuinely unused by bt_runner with a single
+                 <BehaviorTree> (BT.cpp auto-selects the sole tree), so
+                 accepting it is harmless for this repo's own trees too. -->
+            <xs:attribute name="main_tree_to_execute" type="xs:string" use="optional" />
+        </xs:complexType>
+    </xs:element>
+
+    <!-- Groot-editor metadata, unvalidated, per the root element's own
+         comment above. -->
+    <xs:element name="TreeNodesModel">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- Control nodes -->
+    <xs:element name="Sequence" type="BTNodeType" />
+    <xs:element name="ReactiveSequence" type="BTNodeType" />
+    <xs:element name="Fallback" type="FallbackType" />
+    <xs:element name="RetryUntilSuccessful" type="RetryUntilSuccessfulType" />
+
+    <!-- BehaviorTree definition -->
+    <xs:element name="BehaviorTree">
+        <xs:complexType>
+        <xs:sequence>
+            <xs:group ref="ControlFlowGroup"/>
+        </xs:sequence>
+            <xs:attribute name="ID" type="xs:string" use="required" />
+        </xs:complexType>
+    </xs:element>
+
+    <!-- Control flow nodes -->
+    <xs:group name="ControlFlowGroup">
+        <xs:choice>
+            <xs:element ref="Sequence" />
+            <xs:element ref="ReactiveSequence" />
+            <xs:element ref="Fallback" />
+            <xs:element ref="RetryUntilSuccessful" />
+        </xs:choice>
+    </xs:group>
+
+    <!-- Robot actions -->
+    <xs:group name="ActionGroup">
+        <xs:choice>
+            <xs:element name="MoveToTreeID" type="moveToTreeIDType" />
+            <xs:element name="MoveToAisleHead" type="moveToAisleHeadType" />
+            <xs:element name="MoveToGPSLocation" type="moveToGPSLocationType" />
+            <xs:element name="ApproachGPSWaypoint" type="approachGPSWaypointType" />
+            <xs:element name="MoveToRelativeLocation" type="moveToRelativeLocationType" />
+            <xs:element name="OrientRobotHeading" type="orientRobotHeadingType" />
+            <xs:element name="FollowPerson" type="followPersonType" />
+            <!-- <xs:element name="DetectObject" type="detectObjectType" /> -->
+            <xs:element name="MoveArmToPosition" type="moveArmToPositionType" />
+            <xs:element name="SampleLeaf" type="sampleLeafType" />
+            <!-- problog_project additions -->
+            <xs:element name="PlanWith" type="planWithType" />
+            <xs:element name="MoveTo" type="moveToType" />
+        </xs:choice>
+    </xs:group>
+
+    <!-- Conditions -->
+    <xs:group name="ConditionGroup">
+        <xs:choice>
+            <xs:element name="DistanceBelow" type="distanceBelowType" />
+            <xs:element name="DistanceEqual" type="distanceEqualType" />
+            <xs:element name="DistanceOver" type="distanceOverType" />
+            <xs:element name="ObstacleInBound" type="obstacleInBoundType" />
+            <xs:element name="ObstacleOnPath" type="obstacleOnPathType" />
+            <xs:element name="BatteryBelow" type="batteryBelowType" />
+            <xs:element name="BatteryEqual" type="batteryEqualType" />
+            <xs:element name="BatteryOver" type="batteryOverType" />
+            <xs:element name="LineOfSightClear" type="lineOfSightClearType" />
+        </xs:choice>
+    </xs:group>
+
+    <!-- Decorators -->
+    <xs:group name="DecoratorGroup">
+        <xs:choice>
+            <xs:element name="AlwaysSuccess" />
+        </xs:choice>
+    </xs:group>
+
+    <!-- Inverter: BT.cpp's own built-in single-child decorator, wraps
+         ANY one leaf/control node and flips its result. Not part of the
+         base schema at all (only used to negate a Condition inline,
+         which the base schema's own action-only trees never needed);
+         problog_project's own trees rely on it directly (e.g.
+         <Inverter><ObstacleOnPath/></Inverter> as a Sequence's own
+         first child, not just trailing a Fallback), see schema.yaml's
+         own note on why Inverter, not a dedicated negated-condition
+         leaf, is this project's own negation idiom. A separate element
+         from DecoratorGroup above (which only ever appears trailing a
+         Fallback) since Inverter can appear anywhere an
+         action/condition/control node can. -->
+    <xs:element name="Inverter" type="InverterType" />
+    <xs:complexType name="InverterType">
+        <xs:choice minOccurs="1" maxOccurs="1">
+            <xs:group ref="ActionGroup" />
+            <xs:group ref="ConditionGroup" />
+            <xs:group ref="ControlFlowGroup" />
+            <xs:element ref="Inverter" />
+        </xs:choice>
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
+    <xs:attributeGroup name="taskIdentity">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+    </xs:attributeGroup>
+
+    <!-- BTNodeType: control + actions + conditions -->
+    <xs:complexType name="BTNodeType">
+        <xs:sequence>
+            <xs:choice maxOccurs="unbounded" minOccurs="1">
+                <xs:group ref="ActionGroup" />
+                <xs:group ref="ConditionGroup" />
+                <xs:group ref="ControlFlowGroup" />
+                <xs:element ref="Inverter" />
+            </xs:choice>
+        </xs:sequence>
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
+    <!-- RetryUntilSuccessful decorator -->
+    <xs:complexType name="RetryUntilSuccessfulType">
+        <xs:sequence>
+            <xs:choice maxOccurs="1" minOccurs="1">
+                <xs:element ref="Sequence" />
+                <xs:element ref="ReactiveSequence" />
+            </xs:choice>
+        </xs:sequence>
+        <xs:attribute name="num_attempts" type="xs:integer" use="required" />
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
+    <!-- FallbackType: any action/condition/control-flow/Inverter child
+         (broadened from the base schema's own Sequence-only choice,
+         problog_project's own problem4 tree puts a bare
+         ReactiveSequence directly under a Fallback, which real BT.cpp
+         always allowed; every tree that only ever used Sequence
+         children there, this repo's own included, remains valid), then
+         decorators. -->
+    <xs:complexType name="FallbackType">
+        <xs:sequence>
+            <xs:choice minOccurs="1" maxOccurs="unbounded">
+                <xs:group ref="ActionGroup" />
+                <xs:group ref="ConditionGroup" />
+                <xs:group ref="ControlFlowGroup" />
+                <xs:element ref="Inverter" />
+            </xs:choice>
+            <xs:group ref="DecoratorGroup" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
+    <!-- Leaf node types with attributes (unchanged from the base schema) -->
+    <!-- moveToTreeID -->
+    <xs:complexType name="moveToTreeIDType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="follow_tree_id_waypoint" />
+        <xs:attribute name="id" type="xs:integer" use="required" />
+        <xs:attribute name="approach_tree" type="xs:boolean" use="required"/>
+    </xs:complexType>
+
+    <!-- moveToAisleHead -->
+    <xs:complexType name="moveToAisleHeadType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="move_to_aisle_head" />
+        <xs:attribute name="id" type="xs:integer" use="required" />
+    </xs:complexType>
+
+    <!-- moveToGPSLocation -->
+    <xs:complexType name="moveToGPSLocationType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="follow_gps_waypoints" />
+        <xs:attribute name="latitude" type="xs:decimal" use="required" />
+        <xs:attribute name="longitude" type="xs:decimal" use="required" />
+    </xs:complexType>
+
+    <!-- approachGPSWaypoint -->
+    <xs:complexType name="approachGPSWaypointType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="approach_gps_waypoints" />
+        <xs:attribute name="latitude" type="xs:decimal" use="required" />
+        <xs:attribute name="longitude" type="xs:decimal" use="required" />
+    </xs:complexType>
+
+    <!-- moveToRelativeLocation -->
+    <xs:complexType name="moveToRelativeLocationType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="move_in_frame" />
+        <xs:attribute name="x" type="xs:decimal" use="required" />
+        <xs:attribute name="y" type="xs:decimal" use="required" />
+    </xs:complexType>
+
+    <!-- orientRobotHeading -->
+    <xs:complexType name="orientRobotHeadingType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="rotate_in_frame" />
+        <xs:attribute name="absolute" type="xs:boolean" use="required" />
+        <xs:attribute name="yaw" type="xs:decimal" use="required" />
+    </xs:complexType>
+
+    <!-- sampleLeaf -->
+    <xs:complexType name="sampleLeafType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required" fixed="segment_leaves" />
+    </xs:complexType>
+
+    <!-- followPerson -->
+    <xs:complexType name="followPersonType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required" fixed="follow_person" />
+    </xs:complexType>
+
+    <!-- KINOVA ACTIONS -->
+    <xs:simpleType name="armMovementType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="end_effector_link"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="moveArmToPositionType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required"
+            fixed="/move_to" />
+        <xs:attribute name="movement_link" type="armMovementType" use="required"/>
+        <xs:attribute name="x" type="xs:decimal" use="optional"/>
+        <xs:attribute name="y" type="xs:decimal" use="optional"/>
+        <xs:attribute name="z" type="xs:decimal" use="optional"/>
+        <xs:attribute name="roll" type="xs:decimal" use="optional"/>
+        <xs:attribute name="pitch" type="xs:decimal" use="optional"/>
+        <xs:attribute name="yaw" type="xs:decimal" use="optional"/>
+    </xs:complexType>
+
+    <!-- ================================================================
+         problog_project additions — see module/contracts/schema.yaml
+         for each port's own full semantics; this file only captures
+         name/type/required-ness, same scope as every type above.
+         ================================================================ -->
+
+    <!-- PlanWith — one consolidated planner action, algorithm selects
+         which of goal / obstacle_id+offset actually applies (see
+         schema.yaml's own note on this consolidation). service_name is
+         fixed, naming amiga_ros2_planners' plan_service_node's own
+         PlanPath service for a future BT::RosServiceNode leaf to dial. -->
+    <xs:simpleType name="planAlgorithmType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="astar" />
+            <xs:enumeration value="straight" />
+            <xs:enumeration value="voronoi" />
+            <xs:enumeration value="follow_boarder" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="planWithType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="service_name" type="xs:string" use="optional"
+            fixed="plan_path" />
+        <xs:attribute name="algorithm" type="planAlgorithmType" use="required" />
+        <!-- required for astar/straight/voronoi, omitted for follow_boarder -->
+        <xs:attribute name="goal" type="portValueType" use="optional" />
+        <!-- required for follow_boarder, omitted otherwise -->
+        <xs:attribute name="obstacle_id" type="xs:string" use="optional" />
+        <xs:attribute name="offset" type="portValueType" use="optional" />
+        <!-- output ports, typically bound to a blackboard key a
+             subsequent MoveTo/condition reads -->
+        <xs:attribute name="control_points" type="portValueType" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- MoveTo — follows control_points (typically PlanWith's own
+         output, via the shared blackboard-key convention). action_name
+         is fixed, naming amiga_ros2_planners' move_to_node's own MoveTo
+         action for a future BT::RosActionNode leaf to dial (that leaf
+         itself does not exist yet in amiga_ros2_behavior_tree — see this
+         package's own README's "Known limitations"; move_to_node is a
+         working ROS2 action backend, callable today via
+         `ros2 action send_goal`, just not yet wired into a BT.cpp tree). -->
+    <xs:complexType name="moveToType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="move_to" />
+        <xs:attribute name="control_points" type="portValueType" use="required" />
+        <!-- semicolon-separated trigger list, e.g.
+             "obstacle_in_bound(0.6);battery_below(20)" -->
+        <xs:attribute name="triggers" type="xs:string" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- Distance* — shared shape (goal + threshold), three functors -->
+    <xs:complexType name="distanceBelowType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="goal" type="portValueType" use="required" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="distanceEqualType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="goal" type="portValueType" use="required" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="distanceOverType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="goal" type="portValueType" use="required" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- HaltedWith is intentionally NOT declared anywhere in this schema
+         — see this file's own header for why (it needs a tree's own
+         blackboard history, which no stateless service can ever answer,
+         so it's excluded from xml_validation entirely rather than
+         merely unimplemented). -->
+
+    <!-- Obstacle* -->
+    <xs:complexType name="obstacleInBoundType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="obstacleOnPathType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- Battery* -->
+    <xs:complexType name="batteryBelowType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="batteryEqualType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="batteryOverType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- LineOfSightClear -->
+    <xs:complexType name="lineOfSightClearType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="obstacle_id" type="xs:string" use="required" />
+        <xs:attribute name="goal" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- TODO: enable these later (unchanged from the base schema) -->
+    <!-- detectObject -->
+    <!-- <xs:complexType name="detectObjectType">
+        <xs:attribute name="name" type="taskNameType" use="required" />
+        <xs:attribute name="action_name" type="xs:string" use="required" fixed="detect_object" />
+        <xs:attribute name="object" type="xs:string" use="required" />
+        <xs:attribute name="detected" type="blackboardValueType" use="required" />
+    </xs:complexType> -->
+
+    <!-- Comparison types for ValueCondition -->
+    <xs:simpleType name="comparisonType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="lt" />
+            <xs:enumeration value="lte" />
+            <xs:enumeration value="gt" />
+            <xs:enumeration value="gte" />
+            <xs:enumeration value="eq" />
+            <xs:enumeration value="neq" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="blackboardValueType">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="\{[A-Za-z0-9_]+\}" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- Literal (e.g. "11.675;11.525", "0.6") OR a blackboard reference
+         (e.g. "{cp}") — see this file's own header note on why. -->
+    <xs:simpleType name="portValueType">
+        <xs:restriction base="xs:string" />
+    </xs:simpleType>
+
+    <xs:simpleType name="taskNameType">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[A-Za-z0-9_]+" />
+        </xs:restriction>
+    </xs:simpleType>
+
+</xs:schema>

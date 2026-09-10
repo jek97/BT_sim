@@ -20,6 +20,9 @@ fleet needs and what `sim_bringup.launch.py` passes. Two things make that work:
 would silently split mission connections between robots instead of failing.
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -30,6 +33,17 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     namespace = LaunchConfiguration("namespace")
+    # Reproduces bt_runner's own compiled-in default (share_dir +
+    # AMIGA_SCHEMA_DEFAULT_PATH, see xml_validation.hpp) exactly, so this
+    # argument is always passed explicitly -- omitting it when unset would
+    # otherwise set the ROS parameter to "", clobbering the C++ default
+    # instead of falling back to it. Override to point at a different
+    # schema, e.g. amiga_ros2_planners' own amiga_btcpp_planners.xsd for a
+    # mission using PlanWith/MoveTo/the new conditions.
+    default_mission_schema = os.path.join(
+        get_package_share_directory("amiga_ros2_behavior_tree"),
+        "schemas", "amiga_btcpp.xsd",
+    )
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -49,6 +63,14 @@ def generate_launch_description():
                 "xml_validation",
                 default_value="true",
                 description="Whether to validate incoming XML against the mission schema",
+            ),
+            DeclareLaunchArgument(
+                "mission_schema",
+                default_value=default_mission_schema,
+                description="Path to the XSD bt_runner validates mission XML "
+                "against. Defaults to this package's own submodule schema; "
+                "point at amiga_ros2_planners' amiga_btcpp_planners.xsd for "
+                "a mission using PlanWith/MoveTo/the ported conditions.",
             ),
             DeclareLaunchArgument(
                 "payload_length_included",
@@ -116,6 +138,7 @@ def generate_launch_description():
                         "mission_topic": LaunchConfiguration("mission_topic"),
                         "fault_topic": LaunchConfiguration("fault_topic"),
                         "xml_validation": LaunchConfiguration("xml_validation"),
+                        "mission_schema": LaunchConfiguration("mission_schema"),
                     }
                 ],
             ),
