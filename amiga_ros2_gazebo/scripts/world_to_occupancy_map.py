@@ -287,13 +287,74 @@ def _rect_corners(cx, cy, yaw, size_x, size_y):
             for lx, ly in local_corners]
 
 
+def _place_label(draw, font, anchor_x, anchor_y, text, placed_boxes, color, radius_px=0.0):
+    """Draws `text` near (anchor_x, anchor_y) at whichever of several
+    candidate offsets doesn't overlap a label already placed (tracked in
+    `placed_boxes`, mutated in place) -- a greedy declutterer, since a
+    fixed "always to the right" offset is exactly what piles every
+    label from a row of closely-spaced obstacles on top of each other.
+    `radius_px` pushes candidates outside a circular obstacle's own
+    footprint (0 for a rectangle, whose corners already frame it).
+    Falls back to the first candidate (still drawn, just possibly
+    overlapping) if every candidate collides -- a dense cluster can
+    only be decluttered so far without hiding an obstacle entirely."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    pad = 2.0
+    offset = radius_px + 3.0
+    candidates = [
+        (offset, -h / 2.0), (-offset - w, -h / 2.0),           # right, left
+        (-w / 2.0, -offset - h), (-w / 2.0, offset),            # above, below
+        (offset, -offset - h), (offset, offset),                # upper/lower-right
+        (-offset - w, -offset - h), (-offset - w, offset),      # upper/lower-left
+    ]
+    chosen = None
+    for dx, dy in candidates:
+        x0, y0 = anchor_x + dx, anchor_y + dy
+        box = (x0 - pad, y0 - pad, x0 + w + pad, y0 + h + pad)
+        if not any(box[0] < b[2] and box[2] > b[0] and box[1] < b[3] and box[3] > b[1]
+                   for b in placed_boxes):
+            chosen = (x0, y0, box)
+            break
+    if chosen is None:
+        dx, dy = candidates[0]
+        x0, y0 = anchor_x + dx, anchor_y + dy
+        chosen = (x0, y0, (x0 - pad, y0 - pad, x0 + w + pad, y0 + h + pad))
+    x0, y0, box = chosen
+    placed_boxes.append(box)
+    draw.text((x0, y0), text, fill=color, font=font)
+
+
+def _size_table(circles, rects):
+    """[(label, size_text), ...] -- one row per DISTINCT obstacle type
+    (trees all share one radius, fence panels all share one size), so
+    the per-instance labels only need to carry id + position, not their
+    size repeated ~150 times over. A house is unique per map, so it
+    gets its own row too rather than being folded into "rects"."""
+    rows = []
+    if circles:
+        radii = sorted({round(r, 3) for _, _, r, _ in circles})
+        radii_text = ", ".join(f"{r:.2f}m" for r in radii)
+        rows.append((f"Tree ({len(circles)}x)", f"circle, r={radii_text}"))
+    fences = [r for r in rects if r[5] != "house_1"]
+    if fences:
+        sizes = sorted({(round(sx, 3), round(sy, 3)) for _, _, _, sx, sy, _ in fences})
+        sizes_text = ", ".join(f"{sx:.2f}x{sy:.2f}m" for sx, sy in sizes)
+        rows.append((f"Fence panel ({len(fences)}x)", f"rectangle, {sizes_text}"))
+    houses = [r for r in rects if r[5] == "house_1"]
+    for _, _, _, sx, sy, name in houses:
+        rows.append((name, f"rectangle, {sx:.2f}x{sy:.2f}m"))
+    return rows
+
+
 def render_dimensioned_image(circles, rects, bounds, out_path, px_per_meter=15.0):
     """<out_path>.png -- a dimensioned technical diagram of the same
     layout build_map rasterizes: the world (map) reference frame's
-    origin/axes, a metre grid, and every obstacle drawn to scale with
-    its own size and (x, y) position (relative to that SAME origin)
-    labeled next to it. For visually auditing the generated geometry,
-    not something map_server ever loads."""
+    origin/axes, a metre grid, a size-per-obstacle-type table, and every
+    obstacle drawn to scale with its own (x, y) position (relative to
+    that SAME origin) labeled next to it -- positioned to avoid
+    overlapping any other label already placed. For visually auditing
+    the generated geometry, not something map_server ever loads."""
     min_x, min_y, max_x, max_y = bounds
     grid_step = 10.0 if max(max_x - min_x, max_y - min_y) > 60.0 else 5.0
 
@@ -305,8 +366,9 @@ def render_dimensioned_image(circles, rects, bounds, out_path, px_per_meter=15.0
     try:
         font = ImageFont.truetype("DejaVuSans.ttf", 10)
         font_small = ImageFont.truetype("DejaVuSans.ttf", 8)
+        font_table = ImageFont.truetype("DejaVuSans.ttf", 11)
     except OSError:
-        font = font_small = ImageFont.load_default()
+        font = font_small = font_table = ImageFont.load_default()
 
     def to_px(x, y):
         # Image row 0 is the TOP (max-y) -- same flip write_map's own
@@ -342,21 +404,52 @@ def render_dimensioned_image(circles, rects, bounds, out_path, px_per_meter=15.0
         draw.ellipse([ox - 4, oy - 4, ox + 4, oy + 4], outline=(200, 0, 0), width=2)
         draw.text((ox + 6, oy + 4), "(0,0) map reference frame", fill=(200, 0, 0), font=font)
 
-    # Trees -- circle to scale + "id r=... (x,y)" label.
+    # Every already-drawn label's own pixel bbox, so later labels can
+    # dodge them -- seeded with the reference-frame label above and the
+    # size table below (drawn first, once its own box is known) so
+    # obstacle labels dodge those too, not just each other.
+    placed_boxes = []
+    if min_x <= 0.0 <= max_x and min_y <= 0.0 <= max_y:
+        ox, oy = to_px(0.0, 0.0)
+        placed_boxes.append((ox - 6, oy - 20, ox + 160, oy + 20))
+
+    # Size-per-obstacle-type table, top-left corner, on its own white
+    # backing so the metre grid behind it doesn't bleed through the text.
+    rows = _size_table(circles, rects)
+    if rows:
+        row_h = 16
+        col_w = max(draw.textbbox((0, 0), label, font=font_table)[2] for label, _ in rows) + 12
+        table_w = col_w + max(
+            draw.textbbox((0, 0), size, font=font_table)[2] for _, size in rows) + 12
+        table_h = row_h * (len(rows) + 1) + 8
+        draw.rectangle([4, 4, 4 + table_w, 4 + table_h], fill="white", outline=(0, 0, 0))
+        draw.text((10, 8), "Obstacle sizes", fill=(0, 0, 0), font=font_table)
+        for i, (label, size) in enumerate(rows):
+            y = 8 + row_h * (i + 1)
+            draw.text((10, y), label, fill=(0, 0, 0), font=font_table)
+            draw.text((10 + col_w, y), size, fill=(0, 0, 0), font=font_table)
+        placed_boxes.append((4, 4, 4 + table_w, 4 + table_h))
+
+    # Trees -- circle to scale + "id (x,y)" label, decluttered.
     for x, y, r, name in circles:
         cx, cy = to_px(x, y)
         rp = r * px_per_meter
         draw.ellipse([cx - rp, cy - rp, cx + rp, cy + rp], outline=(230, 140, 0), width=2)
-        draw.text((cx + rp + 2, cy - 5), f"{name} r={r:.2f}m ({x:.1f},{y:.1f})",
-                   fill=(150, 90, 0), font=font_small)
+        _place_label(draw, font_small, cx, cy, f"{name} ({x:.1f},{y:.1f})",
+                     placed_boxes, (150, 90, 0), radius_px=rp)
 
-    # Fence panels / house -- rotated rectangle to scale + label.
+    # Fence panels / house -- rotated rectangle to scale + label, decluttered.
     for cx, cy, yaw, size_x, size_y, name in rects:
         corners = [to_px(px, py) for px, py in _rect_corners(cx, cy, yaw, size_x, size_y)]
         draw.polygon(corners, outline=(150, 0, 150))
         lx, ly = to_px(cx, cy)
-        draw.text((lx + 3, ly - 5), f"{name} {size_x:.2f}x{size_y:.2f}m ({cx:.1f},{cy:.1f})",
-                   fill=(110, 0, 110), font=font_small)
+        # Half the LONGER side, not the full diagonal (which over-pushes
+        # a long, thin fence panel's label well past where it needs to
+        # clear the shape) -- close enough to "outside the rectangle"
+        # in every candidate direction _place_label tries.
+        half_px = max(size_x, size_y) / 2.0 * px_per_meter
+        _place_label(draw, font_small, lx, ly, f"{name} ({cx:.1f},{cy:.1f})",
+                     placed_boxes, (110, 0, 110), radius_px=half_px)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     img.save(out_path)
