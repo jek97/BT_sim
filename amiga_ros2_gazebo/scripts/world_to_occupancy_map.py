@@ -46,6 +46,14 @@ inside/on it. inflate defaults to PLANNING_INFLATE_M (0.3), the same
 default build_grid_map itself uses and that export_orchard_map.py
 implicitly relies on by not overriding it.
 
+Also renders a second image per map, "<map_name>_dimensions.png": the
+same obstacle layout drawn as a dimensioned technical diagram rather
+than an occupancy grid -- the world (map) reference frame's origin and
+axes, a metre grid/tick labels, and every obstacle's own shape,
+size, and (x,y) position relative to that origin. Meant for visually
+auditing the generated map/geometry (are trees where you think they
+are, is the fence the right size), not for anything map_server loads.
+
 Usage:
     python3 world_to_occupancy_map.py \
         --world ../worlds/orchard_map_a.sdf \
@@ -58,7 +66,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import yaml
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PACKAGE_DIR = os.path.dirname(_THIS_DIR)
@@ -83,10 +91,10 @@ def _pose_xyyaw(pose_text):
 
 
 def parse_tree_circles(world_root):
-    """[(x, y, radius), ...] -- one per <model name="tree_..">, radius
-    read from that tree's own trunk_collision cylinder (not hardcoded,
-    so this stays correct if generate_orchard_world.py's own template
-    ever changes)."""
+    """[(x, y, radius, name), ...] -- one per <model name="tree_..">,
+    radius read from that tree's own trunk_collision cylinder (not
+    hardcoded, so this stays correct if generate_orchard_world.py's own
+    template ever changes)."""
     circles = []
     for model in world_root.iter("model"):
         name = model.get("name", "")
@@ -97,7 +105,7 @@ def parse_tree_circles(world_root):
         if pose is None or radius_el is None:
             continue
         x, y, _yaw = _pose_xyyaw(pose.text)
-        circles.append((x, y, float(radius_el.text)))
+        circles.append((x, y, float(radius_el.text), name))
     return circles
 
 
@@ -116,14 +124,15 @@ def get_fence_footprint(models_dir):
 
 
 def parse_fence_rects(world_root, length, thickness):
-    """[(cx, cy, yaw, size_x, size_y), ...] -- one per <include> of
-    model://fence. build_map/_rect_distance treat (size_x, size_y) as
-    the rectangle's own LOCAL x/y extents, and the fence's box in
-    models/fence/model.sdf is <size>0.1 5 1.83</size> = (thickness
-    along local x, length along local y) -- so size_x=thickness,
-    size_y=length here, NOT (length, thickness): swapping these put
-    every panel's long axis on the wrong side of the yaw rotation,
-    rendering every fence 90 degrees off from its real orientation."""
+    """[(cx, cy, yaw, size_x, size_y, name), ...] -- one per <include> of
+    model://fence. build_map treats (size_x, size_y) as the rectangle's
+    own LOCAL x/y extents, and the fence's box in models/fence/model.sdf
+    is <size>0.1 5 1.83</size> = (thickness along local x, length along
+    local y) -- so size_x=thickness, size_y=length here, NOT (length,
+    thickness): swapping these put every panel's long axis on the wrong
+    side of the yaw rotation, rendering every fence 90 degrees off from
+    its real orientation. `name` is each <include>'s own <name> (e.g.
+    "hfence_e_03") -- just for the dimensioned-diagram labels."""
     rects = []
     for include in world_root.iter("include"):
         uri = include.find("uri")
@@ -131,7 +140,9 @@ def parse_fence_rects(world_root, length, thickness):
         if uri is None or pose is None or uri.text != "model://fence":
             continue
         x, y, yaw = _pose_xyyaw(pose.text)
-        rects.append((x, y, yaw, thickness, length))
+        name_el = include.find("name")
+        name = name_el.text if name_el is not None else "fence"
+        rects.append((x, y, yaw, thickness, length, name))
     return rects
 
 
@@ -172,9 +183,9 @@ def get_house_local_bbox(models_dir):
 
 
 def parse_house_rect(world_root, size_x, size_y):
-    """(cx, cy, yaw, size_x, size_y) or None if this world has no house.
-    The house's own mesh origin isn't at its bbox center (see the
-    placement math used when it was first added), but for occupancy
+    """(cx, cy, yaw, size_x, size_y, name) or None if this world has no
+    house. The house's own mesh origin isn't at its bbox center (see
+    the placement math used when it was first added), but for occupancy
     purposes we only need its OVERALL footprint size and pose -- a
     filled rectangle at the include's own pose covers the same ground
     area regardless of where the mesh's internal origin sits, since we
@@ -185,39 +196,33 @@ def parse_house_rect(world_root, size_x, size_y):
         if uri is None or pose is None or uri.text != "model://house_1":
             continue
         x, y, yaw = _pose_xyyaw(pose.text)
-        return x, y, yaw, size_x, size_y
+        name_el = include.find("name")
+        name = name_el.text if name_el is not None else "house_1"
+        return x, y, yaw, size_x, size_y, name
     return None
 
 
-def _rect_distance(px, py, cx, cy, yaw, length_x, length_y):
-    """Euclidean distance from point (px,py) to the rectangle centered
-    at (cx,cy), rotated by yaw, with full side lengths (length_x,
-    length_y) along its own local x/y axes. 0 if the point is inside."""
-    dx, dy = px - cx, py - cy
-    cos_y, sin_y = math.cos(-yaw), math.sin(-yaw)
-    local_x = dx * cos_y - dy * sin_y
-    local_y = dx * sin_y + dy * cos_y
-    half_x, half_y = length_x / 2.0, length_y / 2.0
-    ex = max(abs(local_x) - half_x, 0.0)
-    ey = max(abs(local_y) - half_y, 0.0)
-    return math.hypot(ex, ey)
+def compute_bounds(circles, rects, margin):
+    """(min_x, min_y, max_x, max_y) -- every obstacle's own extent,
+    grown by `margin`. Shared by build_map (the occupancy grid) and
+    render_dimensioned_image (the diagram), so the two always agree on
+    how much ground the map covers."""
+    xs, ys = [], []
+    for x, y, r, _name in circles:
+        xs += [x - r - margin, x + r + margin]
+        ys += [y - r - margin, y + r + margin]
+    for cx, cy, yaw, length_x, length_y, _name in rects:
+        half_diag = math.hypot(length_x, length_y) / 2.0
+        xs += [cx - half_diag - margin, cx + half_diag + margin]
+        ys += [cy - half_diag - margin, cy + half_diag + margin]
+    return min(xs), min(ys), max(xs), max(ys)
 
 
 def build_map(circles, rects, resolution, margin, inflate):
     """Rasterize every circle/rect obstacle into one occupancy grid,
     same shape/semantics as planning_core.py's build_grid_map: a cell is
     occupied if within `inflate` metres of any obstacle's own boundary."""
-    xs, ys = [], []
-    for x, y, r in circles:
-        xs += [x - r - margin, x + r + margin]
-        ys += [y - r - margin, y + r + margin]
-    for cx, cy, yaw, length_x, length_y in rects:
-        half_diag = math.hypot(length_x, length_y) / 2.0
-        xs += [cx - half_diag - margin, cx + half_diag + margin]
-        ys += [cy - half_diag - margin, cy + half_diag + margin]
-
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
+    min_x, min_y, max_x, max_y = compute_bounds(circles, rects, margin)
     width = max(1, int(math.ceil((max_x - min_x) / resolution)))
     height = max(1, int(math.ceil((max_y - min_y) / resolution)))
 
@@ -226,11 +231,11 @@ def build_map(circles, rects, resolution, margin, inflate):
     world_x = min_x + (cols + 0.5) * resolution
     world_y = min_y + (rows + 0.5) * resolution
 
-    for x, y, r in circles:
+    for x, y, r, _name in circles:
         occ_r = r + inflate
         data[(world_x - x) ** 2 + (world_y - y) ** 2 <= occ_r ** 2] = 100
 
-    for cx, cy, yaw, length_x, length_y in rects:
+    for cx, cy, yaw, length_x, length_y, _name in rects:
         dx, dy = world_x - cx, world_y - cy
         cos_y, sin_y = math.cos(-yaw), math.sin(-yaw)
         local_x = dx * cos_y - dy * sin_y
@@ -270,6 +275,94 @@ def write_map(data, resolution, origin, out_dir, map_name):
     return pgm_path, yaml_path
 
 
+def _rect_corners(cx, cy, yaw, size_x, size_y):
+    """The 4 world-frame corners of a rectangle centered at (cx, cy),
+    with full side lengths (size_x, size_y) along its own LOCAL x/y
+    axes before being rotated by yaw -- the inverse of the world->local
+    rotation build_map's own occupancy fill uses."""
+    half_x, half_y = size_x / 2.0, size_y / 2.0
+    local_corners = [(-half_x, -half_y), (-half_x, half_y), (half_x, half_y), (half_x, -half_y)]
+    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    return [(cx + lx * cos_y - ly * sin_y, cy + lx * sin_y + ly * cos_y)
+            for lx, ly in local_corners]
+
+
+def render_dimensioned_image(circles, rects, bounds, out_path, px_per_meter=15.0):
+    """<out_path>.png -- a dimensioned technical diagram of the same
+    layout build_map rasterizes: the world (map) reference frame's
+    origin/axes, a metre grid, and every obstacle drawn to scale with
+    its own size and (x, y) position (relative to that SAME origin)
+    labeled next to it. For visually auditing the generated geometry,
+    not something map_server ever loads."""
+    min_x, min_y, max_x, max_y = bounds
+    grid_step = 10.0 if max(max_x - min_x, max_y - min_y) > 60.0 else 5.0
+
+    width_px = max(1, int(round((max_x - min_x) * px_per_meter))) + 1
+    height_px = max(1, int(round((max_y - min_y) * px_per_meter))) + 1
+
+    img = Image.new("RGB", (width_px, height_px), "white")
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 10)
+        font_small = ImageFont.truetype("DejaVuSans.ttf", 8)
+    except OSError:
+        font = font_small = ImageFont.load_default()
+
+    def to_px(x, y):
+        # Image row 0 is the TOP (max-y) -- same flip write_map's own
+        # PGM output uses, so the diagram reads the same way up.
+        return (x - min_x) * px_per_meter, height_px - (y - min_y) * px_per_meter
+
+    def frange(lo, hi, step):
+        v = math.floor(lo / step) * step
+        while v <= hi + 1e-9:
+            if v >= lo - 1e-9:
+                yield round(v, 6)
+            v += step
+
+    # Metre grid + tick labels.
+    for gx in frange(min_x, max_x, grid_step):
+        px, _ = to_px(gx, min_y)
+        draw.line([(px, 0), (px, height_px)], fill=(225, 225, 225))
+        draw.text((px + 2, height_px - 14), f"{gx:g}", fill=(130, 130, 130), font=font_small)
+    for gy in frange(min_y, max_y, grid_step):
+        _, py = to_px(min_x, gy)
+        draw.line([(0, py), (width_px, py)], fill=(225, 225, 225))
+        draw.text((2, py - 12), f"{gy:g}", fill=(130, 130, 130), font=font_small)
+
+    # World reference frame -- origin (0,0) and its +X/+Y axes, IF the
+    # origin actually falls inside this map's own extent.
+    if min_x <= 0.0 <= max_x and min_y <= 0.0 <= max_y:
+        ox, oy = to_px(0.0, 0.0)
+        axis_len = min(width_px, height_px) * 0.06
+        draw.line([(ox, oy), (ox + axis_len, oy)], fill=(0, 0, 220), width=2)
+        draw.line([(ox, oy), (ox, oy - axis_len)], fill=(0, 150, 0), width=2)
+        draw.text((ox + axis_len + 3, oy - 6), "X", fill=(0, 0, 220), font=font)
+        draw.text((ox - 5, oy - axis_len - 14), "Y", fill=(0, 150, 0), font=font)
+        draw.ellipse([ox - 4, oy - 4, ox + 4, oy + 4], outline=(200, 0, 0), width=2)
+        draw.text((ox + 6, oy + 4), "(0,0) map reference frame", fill=(200, 0, 0), font=font)
+
+    # Trees -- circle to scale + "id r=... (x,y)" label.
+    for x, y, r, name in circles:
+        cx, cy = to_px(x, y)
+        rp = r * px_per_meter
+        draw.ellipse([cx - rp, cy - rp, cx + rp, cy + rp], outline=(230, 140, 0), width=2)
+        draw.text((cx + rp + 2, cy - 5), f"{name} r={r:.2f}m ({x:.1f},{y:.1f})",
+                   fill=(150, 90, 0), font=font_small)
+
+    # Fence panels / house -- rotated rectangle to scale + label.
+    for cx, cy, yaw, size_x, size_y, name in rects:
+        corners = [to_px(px, py) for px, py in _rect_corners(cx, cy, yaw, size_x, size_y)]
+        draw.polygon(corners, outline=(150, 0, 150))
+        lx, ly = to_px(cx, cy)
+        draw.text((lx + 3, ly - 5), f"{name} {size_x:.2f}x{size_y:.2f}m ({cx:.1f},{cy:.1f})",
+                   fill=(110, 0, 110), font=font_small)
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    img.save(out_path)
+    return out_path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -290,6 +383,10 @@ def main():
                      help=f"Occupied zone grown this far beyond each obstacle's own "
                      f"boundary, metres (default: {DEFAULT_INFLATE} = "
                      "planning_core.py's own PLANNING_INFLATE_M).")
+    ap.add_argument("--dim-scale", type=float, default=15.0,
+                     help="Pixels per metre in the dimensioned diagram (default: 15).")
+    ap.add_argument("--no-dimensions", action="store_true",
+                     help="Skip generating the <map_name>_dimensions.png diagram.")
     args = ap.parse_args()
 
     map_name = args.map_name or os.path.splitext(os.path.basename(args.world))[0]
@@ -316,6 +413,14 @@ def main():
     pgm_path, yaml_path = write_map(data, resolution, origin, args.out, map_name)
     print(f"wrote {pgm_path}")
     print(f"wrote {yaml_path}")
+
+    if not args.no_dimensions:
+        bounds = compute_bounds(circles, rects, args.margin)
+        dim_path = render_dimensioned_image(
+            circles, rects, bounds,
+            os.path.join(args.out, f"{map_name}_dimensions.png"),
+            px_per_meter=args.dim_scale)
+        print(f"wrote {dim_path}")
 
 
 if __name__ == "__main__":
