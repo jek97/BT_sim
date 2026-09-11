@@ -627,5 +627,147 @@
       </link>
     </model>
 
+    <!-- Orchard perimeter fence: 9m out from the outermost trees on all 4 sides. -->
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_01</name>
+      <pose>-4.0000 -15.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_02</name>
+      <pose>-4.0000 -11.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_03</name>
+      <pose>-4.0000 -6.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_04</name>
+      <pose>-4.0000 -2.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_05</name>
+      <pose>-4.0000 2.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_06</name>
+      <pose>-4.0000 6.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_07</name>
+      <pose>-4.0000 11.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_w_08</name>
+      <pose>-4.0000 15.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_09</name>
+      <pose>23.0000 -15.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_10</name>
+      <pose>23.0000 -11.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_11</name>
+      <pose>23.0000 -6.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_12</name>
+      <pose>23.0000 -2.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_13</name>
+      <pose>23.0000 2.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_14</name>
+      <pose>23.0000 6.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_15</name>
+      <pose>23.0000 11.2500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_e_16</name>
+      <pose>23.0000 15.7500 0 0 0 0.0000</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_17</name>
+      <pose>-1.7500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_18</name>
+      <pose>2.7500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_19</name>
+      <pose>7.2500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_20</name>
+      <pose>11.7500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_21</name>
+      <pose>16.2500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_s_22</name>
+      <pose>20.7500 -18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_23</name>
+      <pose>-1.7500 18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_24</name>
+      <pose>2.7500 18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_25</name>
+      <pose>7.2500 18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_26</name>
+      <pose>11.7500 18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_27</name>
+      <pose>16.2500 18.0000 0 0 0 1.5708</pose>
+    </include>
+    <include>
+      <uri>model://fence</uri>
+      <name>ofence_n_28</name>
+      <pose>20.7500 18.0000 0 0 0 1.5708</pose>
+    </include>
+
   </world>
 </sdf>
