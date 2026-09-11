@@ -22,9 +22,4 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# Sets IGN_GAZEBO_RESOURCE_PATH automatically whenever install/setup.bash is
-# sourced, so `ign gazebo` run directly (not through gazebo.launch.py) can
-# still resolve model://house_1, model://fence, etc. without a manual export.
-ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/hooks/ign_gazebo_resource_path.sh")
-
 ament_package()

@@ -1,5 +1,5 @@
 <?xml version="1.0" ?>
-<sdf version="1.9">
+<sdf version="1.5">
   <model name="fence">
     <static>true</static>
     <link name="link">
@@ -24,14 +24,6 @@
                fell back to a default (untextured) material instead of
                erroring. PBR's albedo_map is parsed natively, no script
                involved. -->
-          <!-- SDF's plain ambient/diffuse default to pure black (0 0 0)
-               when unset. If <pbr> fails to parse for any reason on this
-               Ignition build, there would otherwise be no fallback color
-               at all: explicit non-black values here guarantee the
-               model shows as at least flat white/grey even in that case. -->
-          <ambient>0.8 0.8 0.8 1</ambient>
-          <diffuse>1 1 1 1</diffuse>
-          <specular>0.1 0.1 0.1 1</specular>
           <pbr>
             <metal>
               <albedo_map>model://fence/materials/textures/woodboarding4.jpg</albedo_map>
