@@ -1,0 +1,29 @@
+# RetractTool.action
+#
+# The mirror image of DeployTool.action -- same ports/mechanism, see
+# that file's own header for the full story. Requires `tool` to be the
+# tool CURRENTLY deployed (tool_action_node's own tracked state); on
+# success, tool_action_node's tracked deployed flag reverts to false
+# (the tool stays INSTALLED, just no longer lowered).
+
+# The tool INSTANCE id (e.g. "plow1") currently deployed -- same id= an
+# earlier DeployTool.action goal used.
+string tool
+
+# Same battery-only restriction as InstallTool.action's own triggers port.
+string[] triggers
+---
+# Result
+
+# "retract_success"/"retract_failure" if the full Duration elapsed, or
+# a battery trigger's own name -- same shape as DeployTool.action's own
+# reason port.
+string reason
+
+# true iff reason is "retract_success".
+bool status
+---
+# Feedback
+
+# Wall-clock seconds elapsed since this action started.
+float64 elapsed_s

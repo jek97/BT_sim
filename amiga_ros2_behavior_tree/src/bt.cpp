@@ -28,6 +28,8 @@
 #include "amiga_ros2_behavior_tree/actions/take_sample.hpp"
 #include "amiga_ros2_behavior_tree/actions/install_tool.hpp"
 #include "amiga_ros2_behavior_tree/actions/uninstall_tool.hpp"
+#include "amiga_ros2_behavior_tree/actions/deploy_tool.hpp"
+#include "amiga_ros2_behavior_tree/actions/retract_tool.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -175,6 +177,12 @@ int main(int argc, char **argv) {
   RosNodeParams uninstall_tool_params = ros_params;
   uninstall_tool_params.default_port_value = "uninstall_tool";
   uninstall_tool_params.server_timeout = tool_action_timeout;
+  RosNodeParams deploy_tool_params = ros_params;
+  deploy_tool_params.default_port_value = "deploy_tool";
+  deploy_tool_params.server_timeout = tool_action_timeout;
+  RosNodeParams retract_tool_params = ros_params;
+  retract_tool_params.default_port_value = "retract_tool";
+  retract_tool_params.server_timeout = tool_action_timeout;
 
   factory.registerNodeType<PlanWith>("PlanWith", plan_params);
   factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
@@ -190,6 +198,11 @@ int main(int argc, char **argv) {
   factory.registerNodeType<TakeSample>("TakeSample", sample_params);
   factory.registerNodeType<InstallTool>("InstallTool", install_tool_params);
   factory.registerNodeType<UninstallTool>("UninstallTool", uninstall_tool_params);
+  factory.registerNodeType<DeployTool>("DeployTool", deploy_tool_params);
+  factory.registerNodeType<RetractTool>("RetractTool", retract_tool_params);
+  factory.registerNodeType<SampleValueBelow>("SampleValueBelow", condition_params);
+  factory.registerNodeType<SampleValueEqual>("SampleValueEqual", condition_params);
+  factory.registerNodeType<SampleValueOver>("SampleValueOver", condition_params);
 
   std::string schema_path;
   try {

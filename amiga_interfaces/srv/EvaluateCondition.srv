@@ -22,22 +22,30 @@
 
 # One of: "DistanceBelow", "DistanceEqual", "DistanceOver",
 # "ObstacleInBound", "ObstacleOnPath", "BatteryBelow", "BatteryEqual",
-# "BatteryOver", "LineOfSightClear" -- selects which fields below are
-# actually used, mirroring each condition's own ports in schema.yaml.
+# "BatteryOver", "LineOfSightClear", "SampleValueBelow", "SampleValueEqual",
+# "SampleValueOver" -- selects which fields below are actually used,
+# mirroring each condition's own ports in schema.yaml.
 string condition
 
 # Distance* / LineOfSightClear: the point to check against, world/map
-# frame metres. Unused by Obstacle*/Battery*.
+# frame metres. Unused by Obstacle*/Battery*/SampleValue*.
 float64 goal_x
 float64 goal_y
 
 # Distance* / ObstacleInBound / ObstacleOnPath: metres.
 # Battery*: percent, 0-100.
+# SampleValue*: the drawn value threshold, 0-10.
 float64 threshold
 
 # LineOfSightClear: which tree to check occlusion against. Matches
 # orchard_obstacles.py's "tree_<tree_index>" id convention.
 string obstacle_id
+
+# SampleValue*: must match the id= of an earlier <TakeSample> in this
+# tree. Looked up against condition_service_node's own cache of
+# sample_service_node's latched sample-values topic -- see that node's
+# own module docstring. Unused by every other condition.
+string sample_id
 
 ---
 # Response

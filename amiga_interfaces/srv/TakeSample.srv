@@ -7,12 +7,19 @@
 # shape as PlanPath.srv, not a durative walk like MoveTo.action/
 # InstallTool.action/UninstallTool.action.
 #
-# No request fields at all -- schema.yaml's own TakeSample has no input
-# ports either ("deliberately kept to the simplest possible interface").
 # success_probability (this problem's own config.yaml,
 # sample.success_probability) is a ROS param on sample_service_node's
 # own side, not a per-call argument -- same convention plan_service_node/
 # condition_service_node already use for problog_frame_origin_x/y etc.
+
+# This occurrence's own name (e.g. "soil1"), chosen by the tree author
+# -- NOT the auto-generated ActionCode schema.yaml's own reason ports
+# carry. A later SampleValueBelow/Equal/Over condition references this
+# SAME id to check what value THIS specific sample came back with.
+# sample_service_node.py also publishes it (with its drawn value, on
+# success) on a latched topic so condition_service_node can answer
+# those checks -- see that node's own module docstring.
+string id
 ---
 # One of "sample_success"/"sample_failure" -- matches
 # problog_project/module/contracts/bt_actions.py's own bt_take_sample
@@ -22,3 +29,13 @@ string reason
 
 # true iff reason is "sample_success".
 bool status
+
+# The drawn value, 0-10 -- a discretized Normal(mean,sigma) draw (this
+# problem's own config.yaml, sample.value.mean/sigma), taken ONLY on
+# success (matches schema.yaml's own sample_success(X,Y,V,SampleId,
+# ActionCode) -- V is absent from sample_failure entirely). Meaningless
+# when status is false; sample_service_node.py always sets it to 0 in
+# that case rather than leaving it at ROS's own implicit int32 default,
+# so this is a documented "don't read it" rather than an
+# indistinguishable one.
+int32 value

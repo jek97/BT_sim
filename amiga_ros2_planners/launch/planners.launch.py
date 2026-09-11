@@ -89,16 +89,41 @@ def generate_launch_description():
             "problog_problem.sample_params's own config.yaml mapping "
             "(sample.success_probability)."),
         DeclareLaunchArgument(
+            "sample_value_mean", default_value="5.0",
+            description="TakeSample's own drawn-value distribution "
+            "(config.yaml sample.value.mean/.sigma), on success only."),
+        DeclareLaunchArgument("sample_value_sigma", default_value="2.0"),
+        DeclareLaunchArgument(
             "tool_state_topic", default_value="tool_state",
             description="Latched (TRANSIENT_LOCAL) topic tool_action_node "
-            "publishes its own tracked equipped-tool state on -- "
+            "publishes its own tracked equipped-tool KIND on -- "
             "move_to_node/battery_sim_node both subscribe."),
         DeclareLaunchArgument(
             "tool_activity_topic", default_value="tool_activity",
             description="Latched topic tool_action_node publishes "
-            "\"idle\"/\"installing\"/\"uninstalling\" on -- battery_sim_node "
-            "subscribes, to apply install/uninstall's own drain rate for "
-            "that action's own span."),
+            "\"idle\"/\"installing\"/\"uninstalling\"/\"deploying\"/"
+            "\"retracting\" on -- battery_sim_node subscribes, to apply "
+            "that action's own drain rate for its own span."),
+        DeclareLaunchArgument(
+            "tool_deployed_topic", default_value="tool_deployed",
+            description="Latched topic tool_action_node publishes "
+            "\"true\"/\"false\" on between a successful DeployTool and its "
+            "matching RetractTool -- move_to_node/battery_sim_node both "
+            "subscribe, to select tool.equipped.<kind>.deployed_speed/"
+            ".deployed_moving_drain_rate instead of the regular value."),
+        DeclareLaunchArgument(
+            "tool_instances", default_value="{}",
+            description="JSON object {id: {kind, x, y}, ...} -- "
+            "problog_problem.tool_params's own config.yaml mapping "
+            "(tool.instances), passed as one JSON blob since ros2 launch "
+            "has no clean way to pass a variable-length list of dicts."),
+        DeclareLaunchArgument(
+            "install_range", default_value="1.0",
+            description="Metres -- how close the robot must be to a tool "
+            "instance's own declared position before InstallTool can "
+            "start. problog_problem.tool_params's own config.yaml mapping "
+            "(tool.install.range, defaulting to robot.radius+"
+            "robot.safety_buffer)."),
         DeclareLaunchArgument(
             "controller_server_set_parameters_service",
             default_value="controller_server/set_parameters",
@@ -115,14 +140,30 @@ def generate_launch_description():
         DeclareLaunchArgument("install_duration_plow_s", default_value="10.0"),
         DeclareLaunchArgument("uninstall_duration_cart_s", default_value="10.0"),
         DeclareLaunchArgument("uninstall_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument(
+            "deploy_duration_cart_s", default_value="10.0",
+            description="DeployTool/RetractTool's own duration/success/"
+            "drain-rate knobs -- exact mirror of install/uninstall's own "
+            "above, from config.yaml's tool.deploy.*/tool.retract.*. "
+            "Currently only plow can actually be deployed (see "
+            "tool_action_node.py's own _DEPLOYABLE_KINDS), but these are "
+            "declared per-kind like install/uninstall for the same "
+            "future-proofing schema.yaml's own DeployTool entry notes."),
+        DeclareLaunchArgument("deploy_duration_plow_s", default_value="10.0"),
+        DeclareLaunchArgument("retract_duration_cart_s", default_value="10.0"),
+        DeclareLaunchArgument("retract_duration_plow_s", default_value="10.0"),
         DeclareLaunchArgument("install_success_probability", default_value="0.9"),
         DeclareLaunchArgument("uninstall_success_probability", default_value="0.9"),
+        DeclareLaunchArgument("deploy_success_probability", default_value="0.9"),
+        DeclareLaunchArgument("retract_success_probability", default_value="0.9"),
         DeclareLaunchArgument(
             "install_drain_rate_pct_s", default_value="0.01",
             description="config.yaml's own tool.install.drain_rate, "
             "defaulting to battery_idle_drain_rate_pct_s's own value -- "
             "see problog_problem.tool_params's own docstring."),
         DeclareLaunchArgument("uninstall_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("deploy_drain_rate_pct_s", default_value="0.01"),
+        DeclareLaunchArgument("retract_drain_rate_pct_s", default_value="0.01"),
         DeclareLaunchArgument(
             "tool_speed_free_mps", default_value="0.5",
             description="config.yaml's own motion.speed / "
@@ -132,11 +173,25 @@ def generate_launch_description():
         DeclareLaunchArgument("tool_speed_cart_mps", default_value="0.5"),
         DeclareLaunchArgument("tool_speed_plow_mps", default_value="0.5"),
         DeclareLaunchArgument(
+            "tool_speed_cart_deployed_mps", default_value="0.5",
+            description="config.yaml's own tool.equipped.<tool>."
+            "deployed_speed -- move_to_node's own THIRD speed state, "
+            "applied instead of tool_speed_<tool>_mps while deployed."),
+        DeclareLaunchArgument("tool_speed_plow_deployed_mps", default_value="0.5"),
+        DeclareLaunchArgument(
             "tool_moving_drain_rate_cart_pct_s", default_value="0.1",
             description="config.yaml's own battery.moving_drain_rate / "
             "tool.equipped.<tool>.moving_drain_rate -- battery_sim_node's "
             "own per-tool MoveTo drain rate."),
         DeclareLaunchArgument("tool_moving_drain_rate_plow_pct_s", default_value="0.1"),
+        DeclareLaunchArgument(
+            "tool_moving_drain_rate_cart_deployed_pct_s", default_value="0.1",
+            description="config.yaml's own tool.equipped.<tool>."
+            "deployed_moving_drain_rate -- battery_sim_node's own THIRD "
+            "moving-drain-rate state, applied instead of "
+            "tool_moving_drain_rate_<tool>_pct_s while deployed."),
+        DeclareLaunchArgument(
+            "tool_moving_drain_rate_plow_deployed_pct_s", default_value="0.1"),
 
         # Pointless (and noisy -- it would wait forever for an orchard
         # JSON that never arrives) in problog_problem mode, where A*
@@ -217,11 +272,16 @@ def generate_launch_description():
                 "follow_path_action": LaunchConfiguration("follow_path_action"),
                 "controller_id": LaunchConfiguration("controller_id"),
                 "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
                 "controller_server_set_parameters_service": LaunchConfiguration(
                     "controller_server_set_parameters_service"),
                 "tool_speed_free_mps": LaunchConfiguration("tool_speed_free_mps"),
                 "tool_speed_cart_mps": LaunchConfiguration("tool_speed_cart_mps"),
                 "tool_speed_plow_mps": LaunchConfiguration("tool_speed_plow_mps"),
+                "tool_speed_cart_deployed_mps": LaunchConfiguration(
+                    "tool_speed_cart_deployed_mps"),
+                "tool_speed_plow_deployed_mps": LaunchConfiguration(
+                    "tool_speed_plow_deployed_mps"),
             }],
         ),
         Node(
@@ -240,14 +300,23 @@ def generate_launch_description():
                     "battery_moving_drain_rate_pct_s"),
                 "tool_state_topic": LaunchConfiguration("tool_state_topic"),
                 "tool_activity_topic": LaunchConfiguration("tool_activity_topic"),
+                "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
                 "tool_moving_drain_rate_cart_pct_s": LaunchConfiguration(
                     "tool_moving_drain_rate_cart_pct_s"),
                 "tool_moving_drain_rate_plow_pct_s": LaunchConfiguration(
                     "tool_moving_drain_rate_plow_pct_s"),
+                "tool_moving_drain_rate_cart_deployed_pct_s": LaunchConfiguration(
+                    "tool_moving_drain_rate_cart_deployed_pct_s"),
+                "tool_moving_drain_rate_plow_deployed_pct_s": LaunchConfiguration(
+                    "tool_moving_drain_rate_plow_deployed_pct_s"),
                 "install_drain_rate_pct_s": LaunchConfiguration(
                     "install_drain_rate_pct_s"),
                 "uninstall_drain_rate_pct_s": LaunchConfiguration(
                     "uninstall_drain_rate_pct_s"),
+                "deploy_drain_rate_pct_s": LaunchConfiguration(
+                    "deploy_drain_rate_pct_s"),
+                "retract_drain_rate_pct_s": LaunchConfiguration(
+                    "retract_drain_rate_pct_s"),
             }],
         ),
         Node(
@@ -258,6 +327,8 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "success_probability": LaunchConfiguration("sample_success_probability"),
+                "value_mean": LaunchConfiguration("sample_value_mean"),
+                "value_sigma": LaunchConfiguration("sample_value_sigma"),
             }],
         ),
         Node(
@@ -267,16 +338,29 @@ def generate_launch_description():
             namespace=namespace,
             output="screen",
             parameters=[{
+                "reference_frame": LaunchConfiguration("reference_frame"),
+                "base_frame": LaunchConfiguration("base_frame"),
                 "tool_state_topic": LaunchConfiguration("tool_state_topic"),
                 "tool_activity_topic": LaunchConfiguration("tool_activity_topic"),
+                "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
+                "tool_instances": LaunchConfiguration("tool_instances"),
+                "install_range": LaunchConfiguration("install_range"),
                 "install_duration_cart_s": LaunchConfiguration("install_duration_cart_s"),
                 "install_duration_plow_s": LaunchConfiguration("install_duration_plow_s"),
                 "uninstall_duration_cart_s": LaunchConfiguration("uninstall_duration_cart_s"),
                 "uninstall_duration_plow_s": LaunchConfiguration("uninstall_duration_plow_s"),
+                "deploy_duration_cart_s": LaunchConfiguration("deploy_duration_cart_s"),
+                "deploy_duration_plow_s": LaunchConfiguration("deploy_duration_plow_s"),
+                "retract_duration_cart_s": LaunchConfiguration("retract_duration_cart_s"),
+                "retract_duration_plow_s": LaunchConfiguration("retract_duration_plow_s"),
                 "install_success_probability": LaunchConfiguration(
                     "install_success_probability"),
                 "uninstall_success_probability": LaunchConfiguration(
                     "uninstall_success_probability"),
+                "deploy_success_probability": LaunchConfiguration(
+                    "deploy_success_probability"),
+                "retract_success_probability": LaunchConfiguration(
+                    "retract_success_probability"),
             }],
         ),
     ])

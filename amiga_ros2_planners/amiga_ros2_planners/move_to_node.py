@@ -133,6 +133,16 @@ class MoveToNode(Node):
         self.declare_parameter("tool_speed_free_mps", 0.5)
         self.declare_parameter("tool_speed_cart_mps", 0.5)
         self.declare_parameter("tool_speed_plow_mps", 0.5)
+        # DeployTool/RetractTool's own THIRD speed state -- see
+        # tool_action_node.py's own module docstring. Defaults to that
+        # SAME kind's own regular speed above (config.yaml's own
+        # tool.equipped.<kind>.deployed_speed, defaulting to
+        # tool.equipped.<kind>.speed if not separately overridden) --
+        # problog_problem.tool_params already resolves that default,
+        # this node just reads whatever it's handed.
+        self.declare_parameter("tool_speed_cart_deployed_mps", 0.5)
+        self.declare_parameter("tool_speed_plow_deployed_mps", 0.5)
+        self.declare_parameter("tool_deployed_topic", "tool_deployed")
         self.declare_parameter(
             "controller_server_set_parameters_service",
             "controller_server/set_parameters")
@@ -197,6 +207,14 @@ class MoveToNode(Node):
             String, self.get_parameter("tool_state_topic").value,
             self._on_tool_state, 10, callback_group=self._cb_group)
 
+        # "false" is tool_action_node's own initial state -- see
+        # _on_tool_state's own comment above for why a default here
+        # matters even before tool_action_node's first latched publish.
+        self._deployed = False
+        self.create_subscription(
+            String, self.get_parameter("tool_deployed_topic").value,
+            self._on_tool_deployed, 10, callback_group=self._cb_group)
+
         self._action_server = ActionServer(
             self, MoveTo, "move_to", self._execute,
             cancel_callback=lambda _goal_handle: CancelResponse.ACCEPT,
@@ -207,6 +225,9 @@ class MoveToNode(Node):
     def _on_tool_state(self, msg):
         self._equipped_tool = msg.data
 
+    def _on_tool_deployed(self, msg):
+        self._deployed = msg.data == "true"
+
     def _apply_tool_speed(self, controller_id):
         """Best-effort: sets <controller>.desired_linear_vel on
         controller_server to this walk's own tool-appropriate speed
@@ -216,11 +237,15 @@ class MoveToNode(Node):
         older Nav2 without this exact param name) just means the walk
         runs at whatever speed controller_server was already
         configured with, not a reason to fail the whole action."""
-        speed = {
-            "free": self.get_parameter("tool_speed_free_mps").value,
-            "cart": self.get_parameter("tool_speed_cart_mps").value,
-            "plow": self.get_parameter("tool_speed_plow_mps").value,
-        }.get(self._equipped_tool)
+        if self._deployed and self._equipped_tool in ("cart", "plow"):
+            speed = self.get_parameter(
+                f"tool_speed_{self._equipped_tool}_deployed_mps").value
+        else:
+            speed = {
+                "free": self.get_parameter("tool_speed_free_mps").value,
+                "cart": self.get_parameter("tool_speed_cart_mps").value,
+                "plow": self.get_parameter("tool_speed_plow_mps").value,
+            }.get(self._equipped_tool)
         if speed is None:
             return
         if not self._set_params_client.service_is_ready():

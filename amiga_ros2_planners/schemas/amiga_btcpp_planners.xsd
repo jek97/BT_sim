@@ -89,6 +89,7 @@
     <xs:element name="ReactiveSequence" type="BTNodeType" />
     <xs:element name="Fallback" type="FallbackType" />
     <xs:element name="RetryUntilSuccessful" type="RetryUntilSuccessfulType" />
+    <xs:element name="Repeat" type="RepeatType" />
 
     <!-- BehaviorTree definition -->
     <xs:element name="BehaviorTree">
@@ -107,6 +108,7 @@
             <xs:element ref="ReactiveSequence" />
             <xs:element ref="Fallback" />
             <xs:element ref="RetryUntilSuccessful" />
+            <xs:element ref="Repeat" />
         </xs:choice>
     </xs:group>
 
@@ -129,6 +131,8 @@
             <xs:element name="TakeSample" type="takeSampleType" />
             <xs:element name="InstallTool" type="installToolType" />
             <xs:element name="UninstallTool" type="uninstallToolType" />
+            <xs:element name="DeployTool" type="deployToolType" />
+            <xs:element name="RetractTool" type="retractToolType" />
         </xs:choice>
     </xs:group>
 
@@ -144,6 +148,9 @@
             <xs:element name="BatteryEqual" type="batteryEqualType" />
             <xs:element name="BatteryOver" type="batteryOverType" />
             <xs:element name="LineOfSightClear" type="lineOfSightClearType" />
+            <xs:element name="SampleValueBelow" type="sampleValueBelowType" />
+            <xs:element name="SampleValueEqual" type="sampleValueEqualType" />
+            <xs:element name="SampleValueOver" type="sampleValueOverType" />
         </xs:choice>
     </xs:group>
 
@@ -203,6 +210,28 @@
             </xs:choice>
         </xs:sequence>
         <xs:attribute name="num_attempts" type="xs:integer" use="required" />
+        <xs:attributeGroup ref="taskIdentity" />
+    </xs:complexType>
+
+    <!-- Repeat decorator — problog_project's own bt_to_prolog.py ports
+         this (and RetryUntilSuccessful above) by literal XML unrolling
+         into num_cycles copies of its one child (seq_node), the sound
+         semantic match for "keep going while SUCCEEDING, bail on first
+         FAILURE" (see that file's own module docstring). Same
+         Sequence/ReactiveSequence-only child restriction as
+         RetryUntilSuccessful above for schema consistency; a tree that
+         wants to repeat a single leaf wraps it in a trivial one-child
+         Sequence, which still satisfies problog_project's own "exactly
+         one child" requirement (the Repeat's one child IS that
+         Sequence). -->
+    <xs:complexType name="RepeatType">
+        <xs:sequence>
+            <xs:choice maxOccurs="1" minOccurs="1">
+                <xs:element ref="Sequence" />
+                <xs:element ref="ReactiveSequence" />
+            </xs:choice>
+        </xs:sequence>
+        <xs:attribute name="num_cycles" type="xs:integer" use="required" />
         <xs:attributeGroup ref="taskIdentity" />
     </xs:complexType>
 
@@ -369,16 +398,19 @@
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
-    <!-- TakeSample — instantaneous, no input ports at all (matching
-         schema.yaml's own "deliberately kept to the simplest possible
-         interface"). service_name is fixed, naming amiga_ros2_planners'
-         sample_service_node's own TakeSample service. -->
+    <!-- TakeSample — instantaneous. service_name is fixed, naming
+         amiga_ros2_planners' sample_service_node's own TakeSample
+         service. `id` is required (schema.yaml's own tool-instance-id-
+         refactor-era addition): names THIS occurrence so a later
+         SampleValueBelow/Equal/Over can reference the value it drew. -->
     <xs:complexType name="takeSampleType">
         <xs:attribute name="name" type="taskNameType" use="optional" />
         <xs:attribute name="service_name" type="xs:string" use="optional"
             fixed="take_sample" />
+        <xs:attribute name="id" type="xs:string" use="required" />
         <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
+        <xs:attribute name="value" type="portValueType" use="optional" />
     </xs:complexType>
 
     <!-- InstallTool / UninstallTool — durative, same start/halt shape
@@ -388,18 +420,20 @@
          TRIGGER_FUNCTOR_TO_CONDITION). action_name is fixed, naming
          amiga_ros2_planners' tool_action_node's own "install_tool"/
          "uninstall_tool" actions. -->
-    <xs:simpleType name="toolKindType">
-        <xs:restriction base="xs:string">
-            <xs:enumeration value="cart" />
-            <xs:enumeration value="plow" />
-        </xs:restriction>
-    </xs:simpleType>
-
+    <!-- `tool` used to be a fixed cart/plow KIND enum; problog_project's
+         own tool-instance-id refactor made it a specific tool INSTANCE
+         id from that problem's own config.yaml tool.instances (e.g.
+         "cart1"), not a kind — multiple instances of the same kind can
+         exist. Not validated against a fixed set here (this schema has
+         no access to config.yaml); an unknown id just makes
+         tool_action_node.py's own precondition unsatisfiable at
+         runtime, same "unsatisfied precondition, not a validation
+         error" shape schema.yaml itself now documents. -->
     <xs:complexType name="installToolType">
         <xs:attribute name="name" type="taskNameType" use="optional" />
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="install_tool" />
-        <xs:attribute name="tool" type="toolKindType" use="required" />
+        <xs:attribute name="tool" type="xs:string" use="required" />
         <!-- semicolon-separated, battery-only trigger list, e.g.
              "battery_below(20)" -->
         <xs:attribute name="triggers" type="xs:string" use="optional" />
@@ -411,7 +445,32 @@
         <xs:attribute name="name" type="taskNameType" use="optional" />
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="uninstall_tool" />
-        <xs:attribute name="tool" type="toolKindType" use="required" />
+        <xs:attribute name="tool" type="xs:string" use="required" />
+        <xs:attribute name="triggers" type="xs:string" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- DeployTool / RetractTool — lower/raise a tool that's ALREADY
+         installed (currently restricted to plow at the tool_action_node.py
+         level; see that module's own docstring). Same shape as
+         InstallTool/UninstallTool above — `tool` is the SAME instance id
+         an earlier InstallTool/DeployTool in this tree used. -->
+    <xs:complexType name="deployToolType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="deploy_tool" />
+        <xs:attribute name="tool" type="xs:string" use="required" />
+        <xs:attribute name="triggers" type="xs:string" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <xs:complexType name="retractToolType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="action_name" type="xs:string" use="optional"
+            fixed="retract_tool" />
+        <xs:attribute name="tool" type="xs:string" use="required" />
         <xs:attribute name="triggers" type="xs:string" use="optional" />
         <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
@@ -461,6 +520,27 @@
     </xs:complexType>
     <xs:complexType name="batteryOverType">
         <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- SampleValueBelow/Equal/Over — reads back the VALUE a
+         successful <TakeSample id="..."/> drew (0..10), NOT a live
+         geometry/battery lookup — see condition_service_node.py's own
+         note on why this needs sample_service_node's own latched
+         sample-values state rather than a fresh reading. -->
+    <xs:complexType name="sampleValueBelowType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="id" type="xs:string" use="required" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="sampleValueEqualType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="id" type="xs:string" use="required" />
+        <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="sampleValueOverType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="id" type="xs:string" use="required" />
         <xs:attribute name="threshold" type="portValueType" use="required" />
     </xs:complexType>
 

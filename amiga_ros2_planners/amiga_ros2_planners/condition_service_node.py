@@ -29,6 +29,15 @@ than a situation history:
                                  percentage from battery_sim_node.
   LineOfSightClear           -- tf2 current (x,y) -> goal segment vs.
                                  `obstacle_id`'s own obstacle shape.
+  SampleValueBelow/Equal/Over -- NOT a live reading: looks up `sample_id`'s
+                                 own drawn value (0-10) from
+                                 sample_service_node's own latched
+                                 `sample_values` topic (a JSON id->value
+                                 object) -- see that node's own module
+                                 docstring. A value is fixed the instant
+                                 TakeSample draws it, so this is a
+                                 lookup against that cached state, never
+                                 a fresh computation.
 
 Two obstacle sources, selected by `obstacle_source` (see
 plan_service_node.py's own module docstring for the full rationale --
@@ -47,9 +56,13 @@ equality is "only true at whatever instant" a value crosses the
 threshold, which a discrete-time service poll will essentially never
 land on exactly.
 """
+import json
+
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState
+from std_msgs.msg import String
 
 from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners import polygon_geometry, problog_problem
@@ -80,6 +93,7 @@ class ConditionServiceNode(Node):
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("equal_tolerance_m", 0.1)
         self.declare_parameter("equal_tolerance_pct", 1.0)
+        self.declare_parameter("sample_values_topic", "sample_values")
         # Identity by default -- MUST match plan_service_node's own
         # problog_frame_origin_x/y/yaw_deg params, or a DistanceBelow
         # checked against the "same" goal PlanWith just targeted would
@@ -128,6 +142,19 @@ class ConditionServiceNode(Node):
             BatteryState, self.get_parameter("battery_topic").value,
             self._on_battery, 10)
 
+        # sample_service_node.py's own latched sample-values state --
+        # see this file's own module docstring on SampleValueBelow/
+        # Equal/Over. TRANSIENT_LOCAL so this node gets the CURRENT
+        # full dict immediately on subscribing, regardless of node
+        # startup order.
+        self._sample_values = {}
+        sample_values_qos = QoSProfile(depth=1)
+        sample_values_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        sample_values_qos.reliability = ReliabilityPolicy.RELIABLE
+        self.create_subscription(
+            String, self.get_parameter("sample_values_topic").value,
+            self._on_sample_values, sample_values_qos)
+
         self._handlers = {
             "DistanceBelow": self._distance_below,
             "DistanceEqual": self._distance_equal,
@@ -138,6 +165,9 @@ class ConditionServiceNode(Node):
             "BatteryEqual": self._battery_equal,
             "BatteryOver": self._battery_over,
             "LineOfSightClear": self._line_of_sight_clear,
+            "SampleValueBelow": self._sample_value_below,
+            "SampleValueEqual": self._sample_value_equal,
+            "SampleValueOver": self._sample_value_over,
         }
 
         # Wait for tf2's first pose AND the first BatteryState message
@@ -168,6 +198,9 @@ class ConditionServiceNode(Node):
 
     def _on_battery(self, msg):
         self._battery_percent = msg.percentage * 100.0
+
+    def _on_sample_values(self, msg):
+        self._sample_values = json.loads(msg.data)
 
     # -- current pose helper, shared by every position-based condition --
     def _current_xy_or_none(self, response):
@@ -308,6 +341,40 @@ class ConditionServiceNode(Node):
             return response
         response.result = line_of_sight_clear(
             x, y, request.goal_x, request.goal_y, obstacle)
+        return response
+
+    # -- SampleValue* -------------------------------------------------------
+    def _sample_value_or_none(self, request, response):
+        value = self._sample_values.get(request.sample_id)
+        if value is None:
+            response.result = False
+            response.reason = "unknown_sample_id"
+            return None
+        return value
+
+    def _sample_value_below(self, request, response):
+        value = self._sample_value_or_none(request, response)
+        if value is None:
+            return response
+        response.result = value < request.threshold
+        return response
+
+    def _sample_value_equal(self, request, response):
+        value = self._sample_value_or_none(request, response)
+        if value is None:
+            return response
+        # Sample values are already discrete integers (0-10), drawn
+        # exactly, not a continuous quantity crossing a threshold at
+        # some instant -- unlike DistanceEqual/BatteryEqual, no
+        # tolerance window is needed, just float-safe exact comparison.
+        response.result = abs(value - request.threshold) < 1e-9
+        return response
+
+    def _sample_value_over(self, request, response):
+        value = self._sample_value_or_none(request, response)
+        if value is None:
+            return response
+        response.result = value > request.threshold
         return response
 
     def _on_request(self, request, response):

@@ -151,6 +151,68 @@ bool BatteryOver::setRequest(Request::SharedPtr &request) {
   return true;
 }
 
+// -- SampleValue* (sample id + threshold) ---------------------------------
+
+BT::PortsList SampleValueBelow::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>("id", "must match an earlier <TakeSample id=\"...\">"),
+      BT::InputPort<double>("threshold"),
+  });
+}
+
+bool SampleValueBelow::setRequest(Request::SharedPtr &request) {
+  std::string id;
+  double threshold = 0.0;
+  if (!getInput("id", id) || id.empty() || !getInput("threshold", threshold)) {
+    RCLCPP_ERROR(logger(), "SampleValueBelow: missing/empty id or threshold");
+    return false;
+  }
+  request->condition = "SampleValueBelow";
+  request->sample_id = id;
+  request->threshold = threshold;
+  return true;
+}
+
+BT::PortsList SampleValueEqual::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>("id", "must match an earlier <TakeSample id=\"...\">"),
+      BT::InputPort<double>("threshold"),
+  });
+}
+
+bool SampleValueEqual::setRequest(Request::SharedPtr &request) {
+  std::string id;
+  double threshold = 0.0;
+  if (!getInput("id", id) || id.empty() || !getInput("threshold", threshold)) {
+    RCLCPP_ERROR(logger(), "SampleValueEqual: missing/empty id or threshold");
+    return false;
+  }
+  request->condition = "SampleValueEqual";
+  request->sample_id = id;
+  request->threshold = threshold;
+  return true;
+}
+
+BT::PortsList SampleValueOver::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>("id", "must match an earlier <TakeSample id=\"...\">"),
+      BT::InputPort<double>("threshold"),
+  });
+}
+
+bool SampleValueOver::setRequest(Request::SharedPtr &request) {
+  std::string id;
+  double threshold = 0.0;
+  if (!getInput("id", id) || id.empty() || !getInput("threshold", threshold)) {
+    RCLCPP_ERROR(logger(), "SampleValueOver: missing/empty id or threshold");
+    return false;
+  }
+  request->condition = "SampleValueOver";
+  request->sample_id = id;
+  request->threshold = threshold;
+  return true;
+}
+
 // -- LineOfSightClear (obstacle_id + goal) --------------------------------
 
 BT::PortsList LineOfSightClear::providedPorts() {

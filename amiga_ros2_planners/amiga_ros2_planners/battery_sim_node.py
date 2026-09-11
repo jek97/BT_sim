@@ -58,6 +58,13 @@ class BatterySimNode(Node):
         # tool equipped").
         self.declare_parameter("tool_moving_drain_rate_cart_pct_s", 0.1)
         self.declare_parameter("tool_moving_drain_rate_plow_pct_s", 0.1)
+        # DeployTool/RetractTool's own THIRD moving-drain-rate state --
+        # see move_to_node.py's own tool_speed_*_deployed_mps comment;
+        # same "defaults to that kind's own regular rate" resolution,
+        # already done by problog_problem.tool_params.
+        self.declare_parameter("tool_moving_drain_rate_cart_deployed_pct_s", 0.1)
+        self.declare_parameter("tool_moving_drain_rate_plow_deployed_pct_s", 0.1)
+        self.declare_parameter("tool_deployed_topic", "tool_deployed")
         # install_tool/uninstall_tool's own span-specific rates --
         # problog_problem.tool_params's own install_drain_rate_pct_s/
         # uninstall_drain_rate_pct_s (both already default to
@@ -67,6 +74,10 @@ class BatterySimNode(Node):
         # behavior, not a coincidence).
         self.declare_parameter("install_drain_rate_pct_s", 0.01)
         self.declare_parameter("uninstall_drain_rate_pct_s", 0.01)
+        # DeployTool/RetractTool's own span-specific rates -- exact
+        # mirror of install/uninstall's own, above.
+        self.declare_parameter("deploy_drain_rate_pct_s", 0.01)
+        self.declare_parameter("retract_drain_rate_pct_s", 0.01)
         self.declare_parameter("tool_state_topic", "tool_state")
         self.declare_parameter("tool_activity_topic", "tool_activity")
 
@@ -79,14 +90,21 @@ class BatterySimNode(Node):
             "cart": self.get_parameter("tool_moving_drain_rate_cart_pct_s").value,
             "plow": self.get_parameter("tool_moving_drain_rate_plow_pct_s").value,
         }
+        self._tool_moving_rate_deployed = {
+            "cart": self.get_parameter("tool_moving_drain_rate_cart_deployed_pct_s").value,
+            "plow": self.get_parameter("tool_moving_drain_rate_plow_deployed_pct_s").value,
+        }
         self._install_rate = self.get_parameter("install_drain_rate_pct_s").value
         self._uninstall_rate = self.get_parameter("uninstall_drain_rate_pct_s").value
+        self._deploy_rate = self.get_parameter("deploy_drain_rate_pct_s").value
+        self._retract_rate = self.get_parameter("retract_drain_rate_pct_s").value
         self._last_speed = 0.0
         # Defaults matching tool_action_node's own initial state/first
         # publish -- correct even if this node subscribes before
         # tool_action_node exists at all (no InstallTool/UninstallTool
         # in this mission's own tree), not just before it's started.
         self._equipped_tool = "free"
+        self._deployed = False
         self._activity = "idle"
 
         self._odom_sub = self.create_subscription(
@@ -103,6 +121,8 @@ class BatterySimNode(Node):
             String, self.get_parameter("tool_state_topic").value, self._on_tool_state, 10)
         self.create_subscription(
             String, self.get_parameter("tool_activity_topic").value, self._on_tool_activity, 10)
+        self.create_subscription(
+            String, self.get_parameter("tool_deployed_topic").value, self._on_tool_deployed, 10)
 
         period = 1.0 / float(self.get_parameter("publish_rate_hz").value)
         self._period_s = period
@@ -123,12 +143,21 @@ class BatterySimNode(Node):
     def _on_tool_activity(self, msg):
         self._activity = msg.data
 
+    def _on_tool_deployed(self, msg):
+        self._deployed = msg.data == "true"
+
     def _current_drain_rate(self):
         if self._activity == "installing":
             return self._install_rate
         if self._activity == "uninstalling":
             return self._uninstall_rate
+        if self._activity == "deploying":
+            return self._deploy_rate
+        if self._activity == "retracting":
+            return self._retract_rate
         if self._last_speed > self._speed_threshold:
+            if self._deployed and self._equipped_tool in self._tool_moving_rate_deployed:
+                return self._tool_moving_rate_deployed[self._equipped_tool]
             return self._tool_moving_rate.get(self._equipped_tool, self._moving_rate)
         return self._idle_rate
 

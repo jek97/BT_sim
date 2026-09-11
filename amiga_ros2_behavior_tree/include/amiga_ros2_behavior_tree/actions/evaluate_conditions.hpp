@@ -2,7 +2,7 @@
 
 #include "amiga_ros2_behavior_tree/actions/evaluate_condition_base.hpp"
 
-// Nine small leaves, one per problog_project Condition EXCEPT
+// Twelve small leaves, one per problog_project Condition EXCEPT
 // HaltedWith (see evaluate_condition_base.hpp's own header). Every
 // class here differs from its siblings only in providedPorts()/
 // setRequest() -- which EvaluateCondition::Request fields it fills in
@@ -68,6 +68,27 @@ class BatteryOver : public EvaluateConditionBase {
 };
 
 class LineOfSightClear : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class SampleValueBelow : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class SampleValueEqual : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class SampleValueOver : public EvaluateConditionBase {
  public:
   using EvaluateConditionBase::EvaluateConditionBase;
   static BT::PortsList providedPorts();

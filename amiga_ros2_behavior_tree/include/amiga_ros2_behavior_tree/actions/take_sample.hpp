@@ -23,10 +23,12 @@ using TakeSampleSrv = amiga_interfaces::srv::TakeSample;
 // EvaluateConditionBase (see evaluate_condition_base.hpp's own header
 // for the full story): an async node here would flap RUNNING/SUCCESS
 // across ticks and could tear down a LATER sibling's own in-flight
-// progress inside a ReactiveSequence. TakeSample has no input ports at
-// all (matching schema.yaml's own "deliberately kept to the simplest
-// possible interface"), just the shared service_name port every
-// problog-ported leaf gets.
+// progress inside a ReactiveSequence. TakeSample takes one required
+// input port beyond the shared service_name every problog-ported leaf
+// gets: `id`, this occurrence's own name (schema.yaml's tool-instance-
+// id-refactor-era addition) -- a later SampleValueBelow/Equal/Over
+// condition node references this same id to read back the value this
+// occurrence drew.
 class TakeSample : public BT::SyncActionNode {
  public:
   using Request = TakeSampleSrv::Request;

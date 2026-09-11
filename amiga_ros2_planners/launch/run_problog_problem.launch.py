@@ -55,6 +55,7 @@ a problog_project BT" checklist for the full, current list:
     obstacles_generated.pl ids for "problog_problem" mode) -- only a
     genuinely unusual naming scheme would still need attention.
 """
+import json
 import os
 import tempfile
 
@@ -109,19 +110,37 @@ def launch_setup(context, *args, **kwargs):
             "battery_idle_drain_rate_pct_s": str(battery["idle_drain_rate_pct_s"]),
             "battery_moving_drain_rate_pct_s": str(battery["moving_drain_rate_pct_s"]),
             "sample_success_probability": str(sample["success_probability"]),
+            "sample_value_mean": str(sample["value_mean"]),
+            "sample_value_sigma": str(sample["value_sigma"]),
             "install_duration_cart_s": str(tool["install_duration_s"]["cart"]),
             "install_duration_plow_s": str(tool["install_duration_s"]["plow"]),
             "uninstall_duration_cart_s": str(tool["uninstall_duration_s"]["cart"]),
             "uninstall_duration_plow_s": str(tool["uninstall_duration_s"]["plow"]),
+            "deploy_duration_cart_s": str(tool["deploy_duration_s"]["cart"]),
+            "deploy_duration_plow_s": str(tool["deploy_duration_s"]["plow"]),
+            "retract_duration_cart_s": str(tool["retract_duration_s"]["cart"]),
+            "retract_duration_plow_s": str(tool["retract_duration_s"]["plow"]),
             "install_success_probability": str(tool["install_success_probability"]),
             "uninstall_success_probability": str(tool["uninstall_success_probability"]),
+            "deploy_success_probability": str(tool["deploy_success_probability"]),
+            "retract_success_probability": str(tool["retract_success_probability"]),
             "install_drain_rate_pct_s": str(tool["install_drain_rate_pct_s"]),
             "uninstall_drain_rate_pct_s": str(tool["uninstall_drain_rate_pct_s"]),
+            "deploy_drain_rate_pct_s": str(tool["deploy_drain_rate_pct_s"]),
+            "retract_drain_rate_pct_s": str(tool["retract_drain_rate_pct_s"]),
             "tool_speed_free_mps": str(tool["speed"]["free"]),
             "tool_speed_cart_mps": str(tool["speed"]["cart"]),
             "tool_speed_plow_mps": str(tool["speed"]["plow"]),
+            "tool_speed_cart_deployed_mps": str(tool["deployed_speed"]["cart"]),
+            "tool_speed_plow_deployed_mps": str(tool["deployed_speed"]["plow"]),
             "tool_moving_drain_rate_cart_pct_s": str(tool["moving_drain_rate_pct_s"]["cart"]),
             "tool_moving_drain_rate_plow_pct_s": str(tool["moving_drain_rate_pct_s"]["plow"]),
+            "tool_moving_drain_rate_cart_deployed_pct_s": str(
+                tool["deployed_moving_drain_rate_pct_s"]["cart"]),
+            "tool_moving_drain_rate_plow_deployed_pct_s": str(
+                tool["deployed_moving_drain_rate_pct_s"]["plow"]),
+            "tool_instances": json.dumps(tool["tool_instances"]),
+            "install_range": str(tool["install_range"]),
             "expect_json": "false",
             "payload_length_included": "false",
         }.items(),

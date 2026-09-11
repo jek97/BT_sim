@@ -140,14 +140,19 @@ _DEFAULT_TOOL_SUCCESS_PROBABILITY = 0.9
 
 
 def sample_params(config):
-    """{success_probability} for sample_service_node's own TakeSample
-    backend, from config.yaml's own sample.success_probability -- same
-    1:1 mapping and 0.5 default as
-    module/translators/config_to_prolog.py's own render_prolog (the
-    ProbLog-facing counterpart of this same knob)."""
+    """{success_probability, value_mean, value_sigma} for
+    sample_service_node's own TakeSample backend, from config.yaml's
+    own sample.success_probability/sample.value.mean/sample.value.sigma
+    -- same 1:1 mapping and defaults (0.5/5.0/2.0) as
+    module/translators/config_to_prolog.py's own render_prolog/
+    _discretized_normal_block (the ProbLog-facing counterpart of these
+    same knobs)."""
+    sample_cfg = config.get("sample", {})
+    value_cfg = sample_cfg.get("value", {})
     return {
-        "success_probability": float(
-            config.get("sample", {}).get("success_probability", 0.5)),
+        "success_probability": float(sample_cfg.get("success_probability", 0.5)),
+        "value_mean": float(value_cfg.get("mean", 5.0)),
+        "value_sigma": float(value_cfg.get("sigma", 2.0)),
     }
 
 
@@ -179,19 +184,68 @@ def tool_params(config):
         moving_drain_rate if its own key is missing -- free ALWAYS
         equals the base value (there is no config.yaml key for "no
         tool equipped", same as config_to_prolog.py's own
-        tool_speed(free,_)/tool_moving_drain_rate(free,_) facts)."""
+        tool_speed(free,_)/tool_moving_drain_rate(free,_) facts).
+      deploy_duration_s/retract_duration_s/deploy_success_probability/
+        retract_success_probability/deploy_drain_rate_pct_s/
+        retract_drain_rate_pct_s: exact mirror of the install/uninstall
+        knobs above, from tool.deploy.*/tool.retract.* -- see
+        DeployTool/RetractTool's own schema.yaml entry.
+      deployed_speed/deployed_moving_drain_rate_pct_s: {cart, plow}
+        (no "free" entry -- nothing is ever deployed while unequipped),
+        from tool.equipped.<tool>.deployed_speed/.deployed_moving_
+        drain_rate, each defaulting to that SAME tool's own regular
+        speed/moving_drain_rate above if not separately overridden
+        (basic_action_theory.pl's own effective_tool_speed/3 default).
+      tool_instances: {id: {kind, x, y}}, from tool.instances (a list
+        of {id, kind, x, y} entries in config.yaml, reshaped into a
+        dict keyed by id here since that's how tool_action_node.py
+        looks them up) -- id NOT validated against duplicates/kind
+        values here (config_to_prolog.py already does that at
+        generation time for the ProbLog side; a live BT run just fails
+        the relevant action's own precondition on a bad entry instead,
+        same "unsatisfied precondition, not a validation error" shape
+        as everything else in this function).
+      install_range: metres, from tool.install.range, defaulting to
+        robot.radius+robot.safety_buffer (config_to_prolog.py's own
+        install_tool_range/1 default -- "close enough that the robot's
+        own body reaches it" is the least arbitrary default available
+        without a real robot/tool geometry model)."""
     battery = config.get("battery", {})
     motion = config.get("motion", {})
+    robot = config.get("robot", {})
     install_cfg = config.get("tool", {}).get("install", {})
     uninstall_cfg = config.get("tool", {}).get("uninstall", {})
+    deploy_cfg = config.get("tool", {}).get("deploy", {})
+    retract_cfg = config.get("tool", {}).get("retract", {})
     equipped_cfg = config.get("tool", {}).get("equipped", {})
 
     install_duration_cfg = install_cfg.get("duration_seconds", {})
     uninstall_duration_cfg = uninstall_cfg.get("duration_seconds", {})
+    deploy_duration_cfg = deploy_cfg.get("duration_seconds", {})
+    retract_duration_cfg = retract_cfg.get("duration_seconds", {})
 
     base_speed = float(motion.get("speed", 1.0))
     base_moving_drain_rate = float(battery.get("moving_drain_rate", 0.1))
     idle_drain_rate = float(battery.get("idle_drain_rate", 0.01))
+
+    speed = {
+        "free": base_speed,
+        **{tool: float(equipped_cfg.get(tool, {}).get("speed", base_speed))
+           for tool in _TOOL_KINDS},
+    }
+    moving_drain_rate_pct_s = {
+        "free": base_moving_drain_rate,
+        **{tool: float(equipped_cfg.get(tool, {}).get("moving_drain_rate", base_moving_drain_rate))
+           for tool in _TOOL_KINDS},
+    }
+
+    tool_instances = {}
+    for entry in config.get("tool", {}).get("instances", []):
+        tool_instances[str(entry["id"])] = {
+            "kind": str(entry["kind"]),
+            "x": float(entry["x"]),
+            "y": float(entry["y"]),
+        }
 
     return {
         "install_duration_s": {
@@ -202,20 +256,39 @@ def tool_params(config):
             tool: float(uninstall_duration_cfg.get(tool, _DEFAULT_TOOL_DURATION_S))
             for tool in _TOOL_KINDS
         },
+        "deploy_duration_s": {
+            tool: float(deploy_duration_cfg.get(tool, _DEFAULT_TOOL_DURATION_S))
+            for tool in _TOOL_KINDS
+        },
+        "retract_duration_s": {
+            tool: float(retract_duration_cfg.get(tool, _DEFAULT_TOOL_DURATION_S))
+            for tool in _TOOL_KINDS
+        },
         "install_success_probability": float(
             install_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
         "uninstall_success_probability": float(
             uninstall_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
+        "deploy_success_probability": float(
+            deploy_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
+        "retract_success_probability": float(
+            retract_cfg.get("success_probability", _DEFAULT_TOOL_SUCCESS_PROBABILITY)),
         "install_drain_rate_pct_s": float(install_cfg.get("drain_rate", idle_drain_rate)),
         "uninstall_drain_rate_pct_s": float(uninstall_cfg.get("drain_rate", idle_drain_rate)),
-        "speed": {
-            "free": base_speed,
-            **{tool: float(equipped_cfg.get(tool, {}).get("speed", base_speed))
-               for tool in _TOOL_KINDS},
+        "deploy_drain_rate_pct_s": float(deploy_cfg.get("drain_rate", idle_drain_rate)),
+        "retract_drain_rate_pct_s": float(retract_cfg.get("drain_rate", idle_drain_rate)),
+        "speed": speed,
+        "moving_drain_rate_pct_s": moving_drain_rate_pct_s,
+        "deployed_speed": {
+            tool: float(equipped_cfg.get(tool, {}).get("deployed_speed", speed[tool]))
+            for tool in _TOOL_KINDS
         },
-        "moving_drain_rate_pct_s": {
-            "free": base_moving_drain_rate,
-            **{tool: float(equipped_cfg.get(tool, {}).get("moving_drain_rate", base_moving_drain_rate))
-               for tool in _TOOL_KINDS},
+        "deployed_moving_drain_rate_pct_s": {
+            tool: float(equipped_cfg.get(tool, {}).get(
+                "deployed_moving_drain_rate", moving_drain_rate_pct_s[tool]))
+            for tool in _TOOL_KINDS
         },
+        "tool_instances": tool_instances,
+        "install_range": float(install_cfg.get(
+            "range", round(float(robot.get("radius", 0.5)) +
+                            float(robot.get("safety_buffer", 0.5)), 6))),
     }

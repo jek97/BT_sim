@@ -18,6 +18,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   action/MoveTo.action
   action/InstallTool.action
   action/UninstallTool.action
+  action/DeployTool.action
+  action/RetractTool.action
   DEPENDENCIES geometry_msgs
 )
 
