@@ -19,11 +19,16 @@
           </box>
         </geometry>
         <material>
-          <script>
-            <uri>model://fence/materials/scripts</uri>
-            <uri>model://fence/materials/textures</uri>
-            <name>Fence/WoodBoarding</name>
-          </script>
+          <!-- Ogre2 doesn't support the old Ogre1 .material script format
+               this used to reference (woodboarding.material): it silently
+               fell back to a default (untextured) material instead of
+               erroring. PBR's albedo_map is parsed natively, no script
+               involved. -->
+          <pbr>
+            <metal>
+              <albedo_map>model://fence/materials/textures/woodboarding4.jpg</albedo_map>
+            </metal>
+          </pbr>
         </material>
       </visual>
     </link>

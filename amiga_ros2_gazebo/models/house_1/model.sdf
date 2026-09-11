@@ -19,15 +19,20 @@
           </mesh>
         </geometry>
         <material>
-          <script>
-            <uri>model://house_1/materials/scripts</uri>
-            <uri>model://house_1/materials/textures</uri>
-            <name>House_1/Diffuse</name>
-          </script>
-          <!-- Re-enable when normal maps work again
-          <shader type="normal_map_object_space">
-            <normal_map>House_1_Normal.png</normal_map>
-          </shader-->
+          <!-- Ogre2 (Ignition Fortress's renderer) doesn't support the old
+               Ogre1 .material script format at all: house_1.material's
+               rtshader_system block in particular has no Ogre2 equivalent,
+               so Ogre2 silently fell back to a default (white/black)
+               material instead of erroring. PBR's albedo/normal maps are
+               parsed natively by Ogre2, no script involved, so this also
+               finally re-enables the normal map the old comment above gave
+               up on. -->
+          <pbr>
+            <metal>
+              <albedo_map>model://house_1/materials/textures/House_1_Diffuse.png</albedo_map>
+              <normal_map>model://house_1/materials/textures/House_1_Normal.png</normal_map>
+            </metal>
+          </pbr>
         </material>
       </visual>
     </link>
