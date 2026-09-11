@@ -27,6 +27,12 @@
           <pbr>
             <metal>
               <albedo_map>model://fence/materials/textures/woodboarding4.jpg</albedo_map>
+              <!-- metalness/roughness default to ~1.0/~0.0 (a mirror-like
+                   metal) when unset, which with no environment map to
+                   reflect renders as solid black except for tiny specular
+                   glints. This is a wood fence, not metal. -->
+              <metalness>0.0</metalness>
+              <roughness>0.8</roughness>
             </metal>
           </pbr>
         </material>
