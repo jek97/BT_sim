@@ -23,8 +23,8 @@
 # One of: "DistanceBelow", "DistanceEqual", "DistanceOver",
 # "ObstacleInBound", "ObstacleOnPath", "BatteryBelow", "BatteryEqual",
 # "BatteryOver", "LineOfSightClear", "SampleValueBelow", "SampleValueEqual",
-# "SampleValueOver" -- selects which fields below are actually used,
-# mirroring each condition's own ports in schema.yaml.
+# "SampleValueOver", "CollisionDetected" -- selects which fields below are
+# actually used, mirroring each condition's own ports in schema.yaml.
 string condition
 
 # Distance* / LineOfSightClear: the point to check against, world/map
@@ -46,6 +46,12 @@ string obstacle_id
 # sample_service_node's latched sample-values topic -- see that node's
 # own module docstring. Unused by every other condition.
 string sample_id
+
+# CollisionDetected: one of "front", "back", "left", "right" (a specific
+# chassis bumper contact sensor -- amiga_ros2_gazebo/models/amiga_kinova/
+# model.sdf's own chassis_contact_<side>) or "any" (true if ANY side is
+# currently in contact). Unused by every other condition.
+string side
 
 ---
 # Response

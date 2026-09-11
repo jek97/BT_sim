@@ -61,6 +61,10 @@ SENSOR_TOPICS = [
     "oak_camera_back",
     "realsense",
     "ouster",
+    "chassis/contact_front",
+    "chassis/contact_back",
+    "chassis/contact_left",
+    "chassis/contact_right",
 ]
 
 IGN_ROS2_CONTROL_PLUGIN_OPEN = (
@@ -150,6 +154,14 @@ def robot_bridge_args(ns: str) -> list:
         f"{qualify_ros(ns, 'realsense/camera_info')}@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo",
         # 3D lidar
         f"{qualify_ros(ns, 'ouster/points')}@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked",
+        # Chassis bumper contact sensors (model.sdf's own
+        # chassis_contact_{front,back,left,right}) -- see
+        # condition_service_node.py's own CollisionDetected handler for
+        # how these get exposed to a BT tree.
+        f"{qualify_ros(ns, 'chassis/contact_front')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'chassis/contact_back')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'chassis/contact_left')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'chassis/contact_right')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
     ]
 
 

@@ -203,6 +203,7 @@ int main(int argc, char **argv) {
   factory.registerNodeType<SampleValueBelow>("SampleValueBelow", condition_params);
   factory.registerNodeType<SampleValueEqual>("SampleValueEqual", condition_params);
   factory.registerNodeType<SampleValueOver>("SampleValueOver", condition_params);
+  factory.registerNodeType<CollisionDetected>("CollisionDetected", condition_params);
 
   std::string schema_path;
   try {

@@ -151,6 +151,7 @@
             <xs:element name="SampleValueBelow" type="sampleValueBelowType" />
             <xs:element name="SampleValueEqual" type="sampleValueEqualType" />
             <xs:element name="SampleValueOver" type="sampleValueOverType" />
+            <xs:element name="CollisionDetected" type="collisionDetectedType" />
         </xs:choice>
     </xs:group>
 
@@ -542,6 +543,28 @@
         <xs:attribute name="name" type="taskNameType" use="optional" />
         <xs:attribute name="id" type="xs:string" use="required" />
         <xs:attribute name="threshold" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- CollisionDetected — this simulation's own addition, no
+         schema.yaml entry (problog_project has no notion of genuine
+         Gazebo physics contact). Backed by amiga_kinova/model.sdf's own
+         chassis_contact_<side> sensors, not a tf2-vs-tracked-obstacle-
+         list approximation like every condition above — see
+         condition_service_node.py's own module docstring. `side`
+         defaults to "any" (true if ANY of the four sensors currently
+         reports contact). -->
+    <xs:simpleType name="collisionSideType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="front" />
+            <xs:enumeration value="back" />
+            <xs:enumeration value="left" />
+            <xs:enumeration value="right" />
+            <xs:enumeration value="any" />
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="collisionDetectedType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="side" type="collisionSideType" use="optional" default="any" />
     </xs:complexType>
 
     <!-- LineOfSightClear -->

@@ -39,6 +39,13 @@
     <plugin filename="ignition-gazebo-navsat-system"
             name="ignition::gazebo::systems::NavSat">
     </plugin>
+    <!-- Required for the robot's own chassis_contact_{front,back,left,right}
+         sensors (amiga_ros2_gazebo/models/amiga_kinova/model.sdf) to
+         actually detect/publish contacts: the Sensors/Imu/NavSat
+         systems above don't process contact sensors on their own. -->
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact">
+    </plugin>
 
     <!-- Spherical coordinates for GPS conversion -->
     <spherical_coordinates>

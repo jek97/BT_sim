@@ -38,6 +38,22 @@ than a situation history:
                                  TakeSample draws it, so this is a
                                  lookup against that cached state, never
                                  a fresh computation.
+  CollisionDetected            -- genuine Gazebo physics contact, NOT
+                                 this service's own tf2-vs-tracked-
+                                 obstacle-list approximation every other
+                                 condition above uses: reads whether
+                                 amiga_kinova/model.sdf's own
+                                 chassis_contact_<side> sensor for
+                                 `side` ("front"/"back"/"left"/"right",
+                                 or "any") has reported a contact within
+                                 the last `contact_stale_after_s`
+                                 seconds. Reacts to the robot's REAL
+                                 collision shape touching the
+                                 environment's REAL collision shape
+                                 during actual motion (see this
+                                 package's own README on why every
+                                 other condition here is a simplified
+                                 stand-in, not this one).
 
 Two obstacle sources, selected by `obstacle_source` (see
 plan_service_node.py's own module docstring for the full rationale --
@@ -64,6 +80,8 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
+from ros_gz_interfaces.msg import Contacts
+
 from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners import polygon_geometry, problog_problem
 from amiga_ros2_planners.frame_transform import ProblogFrameTransform
@@ -78,6 +96,8 @@ from amiga_ros2_planners.pose import PoseProvider
 _GOAL_FRAME_CONDITIONS = frozenset({
     "DistanceBelow", "DistanceEqual", "DistanceOver", "LineOfSightClear",
 })
+
+_CONTACT_SIDES = ("front", "back", "left", "right")
 
 
 class ConditionServiceNode(Node):
@@ -94,6 +114,11 @@ class ConditionServiceNode(Node):
         self.declare_parameter("equal_tolerance_m", 0.1)
         self.declare_parameter("equal_tolerance_pct", 1.0)
         self.declare_parameter("sample_values_topic", "sample_values")
+        self.declare_parameter("contact_topic_front", "chassis/contact_front")
+        self.declare_parameter("contact_topic_back", "chassis/contact_back")
+        self.declare_parameter("contact_topic_left", "chassis/contact_left")
+        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_stale_after_s", 0.5)
         # Identity by default -- MUST match plan_service_node's own
         # problog_frame_origin_x/y/yaw_deg params, or a DistanceBelow
         # checked against the "same" goal PlanWith just targeted would
@@ -155,6 +180,24 @@ class ConditionServiceNode(Node):
             String, self.get_parameter("sample_values_topic").value,
             self._on_sample_values, sample_values_qos)
 
+        # chassis_contact_{front,back,left,right}'s own bridged topics
+        # (amiga_ros2_gazebo/models/amiga_kinova/model.sdf) -- see this
+        # file's own module docstring on CollisionDetected. Each side's
+        # own "currently touching" state is the LATEST message's own
+        # contacts list being non-empty, tracked with a short staleness
+        # timeout (contact_stale_after_s) rather than trusted forever:
+        # correct whether the underlying gz Contact sensor publishes
+        # continuously (empty-list messages included, the same
+        # convention every other periodic sensor in this repo uses) or
+        # only while a contact is actually active -- either way, no
+        # message for longer than the timeout means "not touching",
+        # not "still touching from 10 minutes ago".
+        self._last_contact_time = {side: None for side in _CONTACT_SIDES}
+        for side in _CONTACT_SIDES:
+            self.create_subscription(
+                Contacts, self.get_parameter(f"contact_topic_{side}").value,
+                (lambda msg, side=side: self._on_contact(side, msg)), 10)
+
         self._handlers = {
             "DistanceBelow": self._distance_below,
             "DistanceEqual": self._distance_equal,
@@ -168,6 +211,7 @@ class ConditionServiceNode(Node):
             "SampleValueBelow": self._sample_value_below,
             "SampleValueEqual": self._sample_value_equal,
             "SampleValueOver": self._sample_value_over,
+            "CollisionDetected": self._collision_detected,
         }
 
         # Wait for tf2's first pose AND the first BatteryState message
@@ -201,6 +245,25 @@ class ConditionServiceNode(Node):
 
     def _on_sample_values(self, msg):
         self._sample_values = json.loads(msg.data)
+
+    def _on_contact(self, side, msg):
+        if msg.contacts:
+            self._last_contact_time[side] = self.get_clock().now()
+
+    # -- CollisionDetected ------------------------------------------------
+    def _collision_detected(self, request, response):
+        side = request.side
+        sides = _CONTACT_SIDES if side == "any" else (side,)
+        if side != "any" and side not in _CONTACT_SIDES:
+            response.result = False
+            response.reason = f"unknown_side({side})"
+            return response
+        stale_after = self.get_clock().now() - rclpy.duration.Duration(
+            seconds=self.get_parameter("contact_stale_after_s").value)
+        response.result = any(
+            self._last_contact_time[s] is not None and self._last_contact_time[s] > stale_after
+            for s in sides)
+        return response
 
     # -- current pose helper, shared by every position-based condition --
     def _current_xy_or_none(self, response):

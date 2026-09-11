@@ -16,6 +16,10 @@
 
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <!-- ros_gz_interfaces/msg/Contacts: the chassis bumper contact
+       sensors' own bridged ROS type (see gazebo.launch.py's own
+       robot_bridge_args). -->
+  <exec_depend>ros_gz_interfaces</exec_depend>
   <exec_depend>ign_ros2_control</exec_depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>diff_drive_controller</exec_depend>

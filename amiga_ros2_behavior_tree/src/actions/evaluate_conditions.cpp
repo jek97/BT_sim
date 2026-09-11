@@ -213,6 +213,23 @@ bool SampleValueOver::setRequest(Request::SharedPtr &request) {
   return true;
 }
 
+// -- CollisionDetected (side) ----------------------------------------------
+
+BT::PortsList CollisionDetected::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>(
+          "side", "any", "\"front\", \"back\", \"left\", \"right\", or \"any\""),
+  });
+}
+
+bool CollisionDetected::setRequest(Request::SharedPtr &request) {
+  std::string side = "any";
+  getInput("side", side);
+  request->condition = "CollisionDetected";
+  request->side = side;
+  return true;
+}
+
 // -- LineOfSightClear (obstacle_id + goal) --------------------------------
 
 BT::PortsList LineOfSightClear::providedPorts() {

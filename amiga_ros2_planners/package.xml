@@ -22,6 +22,10 @@
   <depend>action_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>amiga_interfaces</depend>
+  <!-- ros_gz_interfaces/msg/Contacts: condition_service_node's own
+       CollisionDetected handler subscribes to the chassis bumper
+       contact sensors' bridged topics. -->
+  <depend>ros_gz_interfaces</depend>
   <depend>python3-numpy</depend>
   <depend>python3-scipy</depend>
   <depend>python3-yaml</depend>

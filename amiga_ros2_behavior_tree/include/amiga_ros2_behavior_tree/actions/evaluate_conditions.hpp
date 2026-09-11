@@ -2,8 +2,12 @@
 
 #include "amiga_ros2_behavior_tree/actions/evaluate_condition_base.hpp"
 
-// Twelve small leaves, one per problog_project Condition EXCEPT
-// HaltedWith (see evaluate_condition_base.hpp's own header). Every
+// Thirteen small leaves, one per problog_project Condition EXCEPT
+// HaltedWith (see evaluate_condition_base.hpp's own header), plus
+// CollisionDetected (no schema.yaml entry -- this simulation's own
+// addition, backed by genuine Gazebo contact sensors rather than a
+// problog_project-ported check; see condition_service_node.py's own
+// module docstring). Every
 // class here differs from its siblings only in providedPorts()/
 // setRequest() -- which EvaluateCondition::Request fields it fills in
 // and which `condition` name it sends -- SUCCESS/FAILURE mapping is
@@ -89,6 +93,13 @@ class SampleValueEqual : public EvaluateConditionBase {
 };
 
 class SampleValueOver : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class CollisionDetected : public EvaluateConditionBase {
  public:
   using EvaluateConditionBase::EvaluateConditionBase;
   static BT::PortsList providedPorts();

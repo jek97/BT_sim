@@ -40,6 +40,83 @@
 					<box><size>1.2 0.8 1.0</size></box>
 				</geometry>
 			</collision>
+			<!-- Bumper collisions: thin slabs flush against each face of
+			     chassis_link_collision's own box (half-extents 0.6/0.4/0.5m),
+			     one per side (+x front, -x back, +y left, -y right, REP-103
+			     convention). A single box collision can't tell WHICH face
+			     was hit, so each side needs its own named collision for the
+			     contact sensors below to distinguish: these don't
+			     duplicate chassis_link_collision's own physics response
+			     (they sit flush, not overlapping outward), they only exist
+			     to give the contact sensors something per-side to watch. -->
+			<collision name='chassis_bumper_front_collision'>
+				<pose>0.625 0 0.80 0 -0 0</pose>
+				<geometry>
+					<box><size>0.05 0.8 1.0</size></box>
+				</geometry>
+			</collision>
+			<collision name='chassis_bumper_back_collision'>
+				<pose>-0.625 0 0.80 0 -0 0</pose>
+				<geometry>
+					<box><size>0.05 0.8 1.0</size></box>
+				</geometry>
+			</collision>
+			<collision name='chassis_bumper_left_collision'>
+				<pose>0 0.425 0.80 0 -0 0</pose>
+				<geometry>
+					<box><size>1.2 0.05 1.0</size></box>
+				</geometry>
+			</collision>
+			<collision name='chassis_bumper_right_collision'>
+				<pose>0 -0.425 0.80 0 -0 0</pose>
+				<geometry>
+					<box><size>1.2 0.05 1.0</size></box>
+				</geometry>
+			</collision>
+			<!-- Contact sensors: one per bumper collision above, each
+			     publishing ignition.msgs.Contacts (bridged to ROS2 as
+			     ros_gz_interfaces/msg/Contacts by gazebo.launch.py's own
+			     robot_bridge_args) whenever that side's own collision box
+			     touches anything: another robot, a tree trunk, a fence
+			     panel, the house: genuine physics contact, not the
+			     BT/planner stack's own simplified circle-distance checks
+			     (see condition_service_node.py's own CollisionDetected
+			     handler for how this gets exposed to a BT tree). Requires
+			     the ignition-gazebo-contact-system world plugin (added to
+			     every world file): the Sensors/Imu/NavSat systems already
+			     loaded there don't process contact sensors on their own. -->
+			<sensor name="chassis_contact_front" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<topic>chassis/contact_front</topic>
+				<contact>
+					<collision>chassis_bumper_front_collision</collision>
+				</contact>
+			</sensor>
+			<sensor name="chassis_contact_back" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<topic>chassis/contact_back</topic>
+				<contact>
+					<collision>chassis_bumper_back_collision</collision>
+				</contact>
+			</sensor>
+			<sensor name="chassis_contact_left" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<topic>chassis/contact_left</topic>
+				<contact>
+					<collision>chassis_bumper_left_collision</collision>
+				</contact>
+			</sensor>
+			<sensor name="chassis_contact_right" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<topic>chassis/contact_right</topic>
+				<contact>
+					<collision>chassis_bumper_right_collision</collision>
+				</contact>
+			</sensor>
 		    			<!-- CHASSIS IMU (added for EKF heading fusion) -->
 			<sensor name="chassis_imu" type="imu">
 				<always_on>true</always_on>
