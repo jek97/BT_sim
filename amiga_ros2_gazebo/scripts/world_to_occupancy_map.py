@@ -102,8 +102,14 @@ def get_fence_footprint(models_dir):
 
 
 def parse_fence_rects(world_root, length, thickness):
-    """[(cx, cy, yaw, length, thickness), ...] -- one per <include> of
-    model://fence."""
+    """[(cx, cy, yaw, size_x, size_y), ...] -- one per <include> of
+    model://fence. build_map/_rect_distance treat (size_x, size_y) as
+    the rectangle's own LOCAL x/y extents, and the fence's box in
+    models/fence/model.sdf is <size>0.1 5 1.83</size> = (thickness
+    along local x, length along local y) -- so size_x=thickness,
+    size_y=length here, NOT (length, thickness): swapping these put
+    every panel's long axis on the wrong side of the yaw rotation,
+    rendering every fence 90 degrees off from its real orientation."""
     rects = []
     for include in world_root.iter("include"):
         uri = include.find("uri")
@@ -111,7 +117,7 @@ def parse_fence_rects(world_root, length, thickness):
         if uri is None or pose is None or uri.text != "model://fence":
             continue
         x, y, yaw = _pose_xyyaw(pose.text)
-        rects.append((x, y, yaw, length, thickness))
+        rects.append((x, y, yaw, thickness, length))
     return rects
 
 
