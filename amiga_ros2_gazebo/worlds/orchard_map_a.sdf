@@ -2055,10 +2055,10 @@
     <include>
       <uri>model://house_1</uri>
       <name>house_1</name>
-      <pose>11.4650 0.0000 2.1008 0 0 1.5708</pose>
+      <pose>11.4650 0.0000 0.0000 0 0 1.5708</pose>
     </include>
 
-    <!-- House fence: 9m out from the house on N/S/E; west wall snapped onto the orchard's own outer perimeter fence line (colinear, x=-4.0). East wall has a ~6m opening centered on the house, facing into the orchard. -->
+    <!-- House fence: 9m out from the house on N/S/E; west wall snapped onto the orchard's own outer perimeter fence line (colinear, x=-4.0). East wall has a 2-panel-length opening centered near the house, facing into the orchard. -->
     <include>
       <uri>model://fence</uri>
       <name>hfence_w_01</name>
@@ -2112,86 +2112,81 @@
     <include>
       <uri>model://fence</uri>
       <name>hfence_e_11</name>
-      <pose>26.5555 -0.9813 0 0 0 0.0000</pose>
-    </include>
-    <include>
-      <uri>model://fence</uri>
-      <name>hfence_e_12</name>
       <pose>26.5555 3.6705 0 0 0 0.0000</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_e_13</name>
+      <name>hfence_e_12</name>
       <pose>26.5555 8.3222 0 0 0 0.0000</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_14</name>
+      <name>hfence_s_13</name>
       <pose>-1.8175 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_15</name>
+      <name>hfence_s_14</name>
       <pose>2.5476 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_16</name>
+      <name>hfence_s_15</name>
       <pose>6.9127 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_17</name>
+      <name>hfence_s_16</name>
       <pose>11.2777 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_18</name>
+      <name>hfence_s_17</name>
       <pose>15.6428 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_19</name>
+      <name>hfence_s_18</name>
       <pose>20.0079 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_s_20</name>
+      <name>hfence_s_19</name>
       <pose>24.3729 -21.9141 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_21</name>
+      <name>hfence_n_20</name>
       <pose>-1.8175 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_22</name>
+      <name>hfence_n_21</name>
       <pose>2.5476 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_23</name>
+      <name>hfence_n_22</name>
       <pose>6.9127 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_24</name>
+      <name>hfence_n_23</name>
       <pose>11.2777 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_25</name>
+      <name>hfence_n_24</name>
       <pose>15.6428 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_26</name>
+      <name>hfence_n_25</name>
       <pose>20.0079 10.6481 0 0 0 1.5708</pose>
     </include>
     <include>
       <uri>model://fence</uri>
-      <name>hfence_n_27</name>
+      <name>hfence_n_26</name>
       <pose>24.3729 10.6481 0 0 0 1.5708</pose>
     </include>
 
