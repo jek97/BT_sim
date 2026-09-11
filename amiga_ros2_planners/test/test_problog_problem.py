@@ -27,6 +27,26 @@ def test_load_obstacle_polygons_from_disk():
         polygons = pp.load_obstacle_polygons(d)
         assert len(polygons) == 1
         assert polygons[0][0] == "obsA"
+        # rings = [outer_points] -- no obstacle_hole/2 fact for obsA, so
+        # this hole-less obstacle carries only its own outer boundary.
+        assert polygons[0][1] == [[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]]
+
+
+def test_load_obstacle_polygons_folds_holes_into_rings():
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "obstacles_generated.pl"), "w") as f:
+            f.write(
+                "obstacle_polygon(obs1, [point(0,0), point(10,0), point(10,10), point(0,10)]).\n"
+                "obstacle_hole(obs1, [point(4,4), point(6,4), point(6,6), point(4,6)]).\n"
+            )
+        polygons = pp.load_obstacle_polygons(d)
+        assert len(polygons) == 1
+        obstacle_id, rings = polygons[0]
+        assert obstacle_id == "obs1"
+        # rings[0] is always the outer boundary, rings[1:] its holes.
+        assert len(rings) == 2
+        assert rings[0] == [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+        assert rings[1] == [(4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0)]
 
 
 def test_load_config_missing_file_returns_empty_dict():
@@ -61,11 +81,12 @@ def test_battery_params_defaults_when_missing():
 
 def test_sample_params_from_config():
     assert pp.sample_params({"sample": {"success_probability": 0.75}}) == {
-        "success_probability": 0.75}
+        "success_probability": 0.75, "value_mean": 5.0, "value_sigma": 2.0}
 
 
 def test_sample_params_defaults_when_missing():
-    assert pp.sample_params({}) == {"success_probability": 0.5}
+    assert pp.sample_params({}) == {
+        "success_probability": 0.5, "value_mean": 5.0, "value_sigma": 2.0}
 
 
 def test_tool_params_defaults_when_missing():

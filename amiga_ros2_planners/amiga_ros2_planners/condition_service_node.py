@@ -386,15 +386,15 @@ class ConditionServiceNode(Node):
         x, y = xy
 
         if self._problog_mode:
-            polygon = next(
-                (pts for oid, pts in self._problem_obstacle_polygons
+            rings = next(
+                (r for oid, r in self._problem_obstacle_polygons
                  if oid == request.obstacle_id), None)
-            if polygon is None:
+            if rings is None:
                 response.result = False
                 response.reason = "no_such_obstacle"
                 return response
             response.result = polygon_geometry.line_of_sight_clear_polygon(
-                x, y, request.goal_x, request.goal_y, polygon)
+                x, y, request.goal_x, request.goal_y, rings)
             return response
 
         obstacle = self._obstacles.get_obstacle(request.obstacle_id)

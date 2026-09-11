@@ -34,8 +34,10 @@ def test_astar_start_on_obstacle_fails():
 
 def test_circle_to_polygon_shape():
     obstacle = Obstacle("tree_0", 1.0, 2.0, 0.5)
-    obstacle_id, polygon = planning_core.circle_to_polygon(obstacle, num_sides=8)
+    obstacle_id, rings = planning_core.circle_to_polygon(obstacle, num_sides=8)
     assert obstacle_id == "tree_0"
+    assert len(rings) == 1  # a circular canopy never has a hole
+    polygon = rings[0]
     assert len(polygon) == 8
     for x, y in polygon:
         assert abs(((x - 1.0) ** 2 + (y - 2.0) ** 2) ** 0.5 - 0.5) < 1.0e-9

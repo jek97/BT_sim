@@ -422,3 +422,51 @@ thread makes it safe here, rather than a genuinely async rewrite).
   single-digit-vertex obstacles), untested at anything larger; lower
   `GRID_RESOLUTION_M` or add a bounding-box pre-check per obstacle if a
   much bigger/finer problem ever makes this slow.
+- **`ObstacleInBound`/`ObstacleOnPath`/every planner now use REAL
+  obstacle shapes, ring/hole-aware, matching `problog_project`'s own
+  fix** — `problog_problem.load_obstacle_polygons` now folds each
+  `obstacle_hole/2` fact back into its own obstacle as an extra ring
+  (`[outer_points, hole1_points, ...]`), and `planning_core.py`/
+  `polygon_geometry.py`'s containment/clearance/rasterization
+  (`_inside_polygon`/`build_polygon_grid`/`_voronoi_sites`/
+  `_follow_boarder_control_points`) are all byte-for-byte ports of
+  `problog_project`'s own ring-aware versions — the SAME fix that
+  project's own `occgrid_to_problog.py`/`collision_geometry.py`/
+  `planners.py` just made for a perimeter fence's own hollow, walkable
+  interior (previously misread as solid obstacle material). Validated
+  directly against `problems/problem5/obstacles_generated.pl`
+  (`orchard_map_a`, `obstacle_source=problog_problem`): `obs62`'s own
+  perimeter-fence ring now correctly has 2 rings (outer + hole), the
+  problem's own `initial_situation` start point and the plow's own
+  `(0,0)` both correctly read as free (not inside `obs62`), and `astar`/
+  `voronoi`/`follow_boarder` all find valid routes between them — the
+  exact `no_path`/`crashed(obs1)` failure `problem5/behavior_tree.xml`'s
+  own header comment describes is fixed on this side too. The `orchard`
+  obstacle source (circular tree canopies) is unaffected — a circle
+  never has a hole, so `circle_to_polygon` just wraps it as a
+  single-ring `rings=[outer_points]`.
+- **`amiga_btcpp_planners.xsd` now accepts `<include path="..."/>` and
+  `<SubTree ID="..." .../>`** — BT.cpp v4's own multi-file-tree
+  mechanism, needed by `problem5` (the first checked-in problem to
+  split its own tree across `install_closest_plow.xml`/`plowing.xml`/
+  `uninstall_plow.xml`, included from `behavior_tree.xml`'s own root).
+  `problem5`'s adapted tree now validates end-to-end against this
+  schema. Whether `bt_runner`'s own C++ `XMLParser` actually resolves
+  `<include>`'s relative `path` correctly once `adapt_tree.py` has
+  copied the including file into `/tmp` (its own sibling files are NOT
+  copied alongside it) is unverified — same class of caveat as every
+  other BT.cpp-runtime item on this list, since no ROS2/`behaviortree_
+  ros2` build was available in this session.
+- **`problem5` needs several node types this repo has not ported yet**:
+  `Hitched` (condition, optional `kind` port), `HitchedId`/
+  `NearestToolOfKind` (actions, tool-lookup-by-state/-by-kind), and
+  `Deployed`/`PloughedAt`/`PloughedBetween` (conditions — the last two
+  need a NEW piece of runtime state this simulation doesn't track at
+  all yet: which grid cells a deployed plow has already ploughed,
+  discretized the same way `problog_project`'s own `ploughed/3`
+  fluent is). None of these are in `amiga_btcpp_planners.xsd`'s
+  `ActionGroup`/`ConditionGroup` yet, so `problem5`'s tree validates
+  structurally (root shape + `include`/`SubTree`, above) but would
+  still fail `bt_runner`'s own node-registration lookup if ticked as-is
+  — a distinct, sizable follow-up (a ploughing/tool-state feature), not
+  attempted here.

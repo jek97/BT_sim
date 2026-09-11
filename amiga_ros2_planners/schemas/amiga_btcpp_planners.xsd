@@ -51,6 +51,20 @@
         <xs:complexType>
             <xs:sequence>
                 <xs:element name="Mission" type="xs:string" minOccurs="1" />
+                <!-- Zero or more <include path="..."/>: BT.cpp v4's own
+                     multi-file-tree mechanism: a problem's own
+                     behavior_tree.xml pulls in sibling files (each
+                     declaring its own <BehaviorTree ID="..."> a
+                     <SubTree ID="..."/> below then invokes by that same
+                     ID) rather than inlining every subtree's own
+                     Sequence into one file — see problog_project's own
+                     problem5, the first checked-in problem to use this
+                     (install_closest_plow.xml/plowing.xml/
+                     uninstall_plow.xml). adapt_tree.py's own
+                     ET.insert(0, mission) always places <Mission> BEFORE
+                     any <include> already present, hence this ordering
+                     (Mission, then include*, then BehaviorTree+). -->
+                <xs:element ref="include" minOccurs="0" maxOccurs="unbounded" />
                 <xs:element ref="BehaviorTree" maxOccurs="unbounded" />
                 <!-- Optional trailing TreeNodesModel (standard BT.cpp v4
                      Groot-editor metadata; problog_project's own trees
@@ -71,6 +85,19 @@
                  <BehaviorTree> (BT.cpp auto-selects the sole tree), so
                  accepting it is harmless for this repo's own trees too. -->
             <xs:attribute name="main_tree_to_execute" type="xs:string" use="optional" />
+        </xs:complexType>
+    </xs:element>
+
+    <!-- <include path="..."/>: see the root element's own comment on
+         why this exists. `path` is a plain relative (to the including
+         file's own directory, BT.cpp's own convention) or absolute
+         path to another BT.cpp XML file; not resolved or validated
+         here (bt_runner/BT.cpp's own XMLParser does that at load time,
+         same as this schema never opens a referenced file for any
+         other reason either). -->
+    <xs:element name="include">
+        <xs:complexType>
+            <xs:attribute name="path" type="xs:string" use="required" />
         </xs:complexType>
     </xs:element>
 
@@ -133,8 +160,29 @@
             <xs:element name="UninstallTool" type="uninstallToolType" />
             <xs:element name="DeployTool" type="deployToolType" />
             <xs:element name="RetractTool" type="retractToolType" />
+            <xs:element ref="SubTree" />
         </xs:choice>
     </xs:group>
+
+    <!-- SubTree: invokes a <BehaviorTree ID="..."> declared either
+         later in this same file or in another file pulled in via
+         <include> (see that element's own comment) — BT.cpp v4's own
+         tree-composition mechanism, needed by problog_project's own
+         problem5 (install_closest_plow.xml/plowing.xml/
+         uninstall_plow.xml, each its own single-BehaviorTree file
+         included from behavior_tree.xml's own root and invoked by ID
+         from MainTree). Port remapping (e.g. <SubTree ID="plowing"
+         p1="5;27" p2="41;27"/>, matching that subtree's own
+         <Input_port name="p1"/> declarations) is an open-ended set of
+         attributes beyond ID — xs:anyAttribute accepts any of them
+         without this schema needing to know a given subtree's own
+         port names. -->
+    <xs:element name="SubTree">
+        <xs:complexType>
+            <xs:attribute name="ID" type="xs:string" use="required" />
+            <xs:anyAttribute processContents="skip" />
+        </xs:complexType>
+    </xs:element>
 
     <!-- Conditions -->
     <xs:group name="ConditionGroup">

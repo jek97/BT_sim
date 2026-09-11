@@ -14,10 +14,17 @@ which is the rest of problog_project's own pipeline -- goal_formula.pl,
 basic_action_theory.pl, ProbLog inference itself, none of which this
 loads, since bt_runner never needs a formal proof to tick a tree):
 
-  obstacles_generated.pl -- obstacle_polygon(Id, [point(X,Y), ...])
-    facts. Parsed with the SAME regex-based parser problog_project's own
-    planners.py/collision_geometry.py use (see _parse_obstacle_polygons
-    below -- a direct port, not a reimplementation).
+  obstacles_generated.pl -- obstacle_polygon(Id, [point(X,Y), ...]) facts,
+    plus zero or more obstacle_hole(Id, [point(X,Y), ...]) facts per Id
+    (a hollow, walkable interior within that same obstacle -- e.g. a
+    perimeter fence's own inner face). Parsed with the SAME regex-based
+    parsers problog_project's own planners.py/collision_geometry.py use
+    (see _parse_obstacle_polygons/_parse_obstacle_holes below -- direct
+    ports, not reimplementations). load_obstacle_polygons folds each
+    Id's own hole(s) back in as extra rings, exactly like those two
+    modules' own OBSTACLE_POLYGONS/_OBSTACLE_POLYGONS module-level
+    globals -- see load_obstacle_polygons's own docstring for the
+    [(id, rings), ...] shape every consumer here now expects.
 
   config.yaml -- specifically initial_situation.start_x/start_y (used
     to auto-calibrate ProblogFrameTransform -- see
@@ -48,10 +55,12 @@ def _strip_prolog_comments(text):
 
 
 def _parse_obstacle_polygons(text):
-    """[(id, [(x,y), ...]), ...] -- byte-for-byte port of
+    """[(id, [(x,y), ...]), ...] -- each obstacle's own OUTER boundary
+    only. Byte-for-byte port of
     problog_project/module/theory/planners.py's own
     _parse_obstacle_polygons (and collision_geometry.py's identical
-    copy of it)."""
+    copy of it) -- see _parse_obstacle_holes below for how a hole (if
+    any) gets folded back in."""
     polygons = []
     for m in re.finditer(r"obstacle_polygon\(([^,]+),\s*\[(.*?)\]\s*\)\s*\.", text, re.S):
         obstacle_id = m.group(1).strip()
@@ -61,17 +70,45 @@ def _parse_obstacle_polygons(text):
     return polygons
 
 
+def _parse_obstacle_holes(text):
+    """{id: [hole_points, ...]} -- byte-for-byte port of
+    problog_project's own _parse_obstacle_holes (planners.py/
+    collision_geometry.py's identical copies), matching
+    obstacle_hole(Id, [point(X,Y), ...]) facts."""
+    holes = {}
+    for m in re.finditer(r"obstacle_hole\(([^,]+),\s*\[(.*?)\]\s*\)\s*\.", text, re.S):
+        obstacle_id = m.group(1).strip()
+        points = [(float(x), float(y)) for x, y in _POINT_RE.findall(m.group(2))]
+        if len(points) >= 3:
+            holes.setdefault(obstacle_id, []).append(points)
+    return holes
+
+
 def load_obstacle_polygons(problem_dir):
-    """[(id, [(x,y), ...]), ...] from <problem_dir>/obstacles_generated.pl,
-    or [] if that file doesn't exist (a problem with no obstacles at
-    all is valid -- straight-line/no-avoidance scenarios)."""
+    """[(id, rings), ...] from <problem_dir>/obstacles_generated.pl, or
+    [] if that file doesn't exist (a problem with no obstacles at all
+    is valid -- straight-line/no-avoidance scenarios). rings is
+    [outer_points, hole1_points, ...] -- rings[0] is ALWAYS the
+    obstacle's own outer boundary, rings[1:] its own hole(s), if any
+    (empty for the common, hole-less case) -- exactly the shape
+    problog_project's own OBSTACLE_POLYGONS/_OBSTACLE_POLYGONS
+    module-level globals use (collision_geometry.py/planners.py), so
+    every consumer here (planning_core.py's polygon rasterizer/
+    planners, polygon_geometry.py's clearance/line-of-sight checks)
+    ports their ring+hole-aware containment test byte-for-byte too,
+    rather than re-introducing the "perimeter fence's own hollow
+    interior reads as solid" bug problog_project itself just fixed
+    (see occgrid_to_problog.py's own module docstring)."""
     path = os.path.join(problem_dir, "obstacles_generated.pl")
     try:
         with open(path) as f:
             text = f.read()
     except FileNotFoundError:
         return []
-    return _parse_obstacle_polygons(_strip_prolog_comments(text))
+    text = _strip_prolog_comments(text)
+    holes_by_id = _parse_obstacle_holes(text)
+    return [(obstacle_id, [outer_points] + holes_by_id.get(obstacle_id, []))
+            for obstacle_id, outer_points in _parse_obstacle_polygons(text)]
 
 
 def load_config(problem_dir):

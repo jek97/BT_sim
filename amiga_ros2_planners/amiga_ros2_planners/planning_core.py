@@ -20,14 +20,16 @@ happen to be circular trees today, but the whole point of porting the
 ORIGINAL polygon algorithm rather than a circle-specialized shortcut is
 that a future obstacle source (a hedgerow, a parked implement, another
 robot's own footprint) need not be circular at all -- obstacle_polygons
-below is a plain [(id, [(x,y), ...]), ...] list, exactly
-problog_project's own _OBSTACLE_POLYGONS shape, just passed as a
-parameter here (problog_project loads it once from
-obstacles_generated.pl at import time; this simulation has no such
-file, so plan_service_node builds this list itself each call from
-whatever OrchardObstacleStore currently reports -- see
-circle_to_polygon/obstacles_to_polygons below for the one adapter step
-that differs).
+below is a plain [(id, rings), ...] list (rings = [outer_points,
+hole1_points, ...], rings[0] always the outer boundary -- see
+problog_problem.load_obstacle_polygons's own docstring), exactly
+problog_project's own _OBSTACLE_POLYGONS shape (ring+hole-aware, as of
+that project's own perimeter-fence fix), just passed as a parameter
+here (problog_project loads it once from obstacles_generated.pl at
+import time; this simulation has no such file, so plan_service_node
+builds this list itself each call from whatever OrchardObstacleStore
+currently reports -- see circle_to_polygon/obstacles_to_polygons below
+for the one adapter step that differs).
 
 Only two things are genuinely NEW rather than ported:
   - circle_to_polygon/obstacles_to_polygons: today's only obstacle
@@ -161,23 +163,28 @@ def _fit_or_straight(path_xy, sx, sy, gx, gy):
 # ...] shape, and knows nothing about circles at all.
 # =====================================================================
 def circle_to_polygon(obstacle, num_sides=_CIRCLE_POLYGON_SIDES):
-    """One Obstacle(id, x, y, radius) -> (id, [(x,y), ...]) -- a regular
+    """One Obstacle(id, x, y, radius) -> (id, rings) -- a regular
     num_sides-gon approximating its canopy circle, vertices in
     counterclockwise order (either winding works: every polygon
     function below re-derives its own via _signed_polygon_area, same as
     problog_project's own obstacle_polygon/2 facts make no winding
-    guarantee either)."""
+    guarantee either), wrapped as rings=[outer_points] -- a circular
+    tree canopy never has a hole, but every consumer downstream now
+    expects the same [(id, rings), ...] shape problog_problem.
+    load_obstacle_polygons produces (see that function's own
+    docstring), so this is wrapped here rather than special-cased at
+    every call site."""
     vertices = [
         (obstacle.x + obstacle.radius * math.cos(2.0 * math.pi * k / num_sides),
          obstacle.y + obstacle.radius * math.sin(2.0 * math.pi * k / num_sides))
         for k in range(num_sides)
     ]
-    return obstacle.id, vertices
+    return obstacle.id, [vertices]
 
 
 def obstacles_to_polygons(obstacles, num_sides=_CIRCLE_POLYGON_SIDES):
-    """[Obstacle, ...] -> [(id, [(x,y), ...]), ...] -- see
-    circle_to_polygon above."""
+    """[Obstacle, ...] -> [(id, rings), ...] -- see circle_to_polygon
+    above."""
     return [circle_to_polygon(o, num_sides) for o in obstacles]
 
 
@@ -308,9 +315,15 @@ def build_polygon_grid(obstacle_polygons, sx, sy, gx, gy,
     footprint (occgrid_to_problog.py's own extraction already accounts
     for robot radius/safety_buffer at the source -- see
     obstacles_generated.pl's own header comment) -- inflating again here
-    would double-count it."""
-    xs = [x for _oid, poly in obstacle_polygons for x, _y in poly]
-    ys = [y for _oid, poly in obstacle_polygons for _x, y in poly]
+    would double-count it.
+
+    `obstacle_polygons` is [(id, rings), ...] -- rings = [outer_points,
+    hole1_points, ...] (see problog_problem.load_obstacle_polygons's own
+    docstring); a cell inside a hole is correctly left FREE via
+    _inside_polygon's own ring-aware containment test, rather than
+    treated as part of the obstacle's solid material."""
+    xs = [x for _oid, rings in obstacle_polygons for ring in rings for x, _y in ring]
+    ys = [y for _oid, rings in obstacle_polygons for ring in rings for _x, y in ring]
     min_x = min(sx, gx, *xs) - margin if xs else min(sx, gx) - margin
     max_x = max(sx, gx, *xs) + margin if xs else max(sx, gx) + margin
     min_y = min(sy, gy, *ys) - margin if ys else min(sy, gy) - margin
@@ -324,8 +337,8 @@ def build_polygon_grid(obstacle_polygons, sx, sy, gx, gy,
     for row in range(height):
         for col in range(width):
             world_x, world_y = grid.grid_to_world(row, col)
-            for _obstacle_id, polygon in obstacle_polygons:
-                if _inside_polygon(world_x, world_y, polygon):
+            for _obstacle_id, rings in obstacle_polygons:
+                if _inside_polygon(world_x, world_y, rings):
                     data[row, col] = 100
                     break
 
@@ -452,8 +465,24 @@ def plan_astar_points(sx, sy, gx, gy, obstacles=None, grid=None):
 # _polygon_edges/_edge_crosses/_inside_polygon/_signed_polygon_area.
 # =====================================================================
 def _polygon_edges(points):
+    """ONE ring's own closed edge list -- the primitive every function
+    below builds on. See _all_edges for how an obstacle's own MULTIPLE
+    rings (outer + holes) combine."""
     closed = list(points) + [points[0]]
     return list(zip(closed[:-1], closed[1:]))
+
+
+def _all_edges(rings):
+    """rings: [outer_points, hole1_points, ...] -- one obstacle's own
+    full set of boundaries (see problog_problem.load_obstacle_polygons's
+    own docstring). Returns every ring's own edges, concatenated -- each
+    ring is closed INDEPENDENTLY (via _polygon_edges), never bridged
+    into the next one, so a combined edge-crossing count over this list
+    is exactly the standard even-odd rule for "inside the outer
+    boundary AND outside every hole" -- byte-for-byte port of
+    problog_project's own _all_edges (collision_geometry.py/
+    planners.py)."""
+    return [edge for ring in rings for edge in _polygon_edges(ring)]
 
 
 def _edge_crosses(px, py, ax, ay, bx, by):
@@ -463,8 +492,18 @@ def _edge_crosses(px, py, ax, ay, bx, by):
     return False
 
 
-def _inside_polygon(px, py, points):
-    count = sum(1 for (ax, ay), (bx, by) in _polygon_edges(points)
+def _inside_polygon(px, py, rings):
+    """TRUE iff (px,py) is inside the obstacle's own SOLID material --
+    inside the outer ring AND outside every hole ring (an ordinary,
+    hole-less obstacle just has rings=[outer_points], unaffected).
+    Byte-for-byte port of problog_project's own _inside_polygon
+    (collision_geometry.py/planners.py) -- see those modules' own
+    docstring for the full even-odd-over-combined-rings argument.
+    `rings` is normally an obstacle's own full [outer, hole1, ...] list,
+    but _offset_boundary_clockwise below also calls this with a SINGLE
+    ring wrapped in its own one-element list ([vertices]), to test
+    containment against just that one boundary."""
+    count = sum(1 for (ax, ay), (bx, by) in _all_edges(rings)
                 if _edge_crosses(px, py, ax, ay, bx, by))
     return count % 2 == 1
 
@@ -502,7 +541,7 @@ def _offset_boundary_clockwise(polygon, offset):
         n2 = (edy, -edx)
         mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
         probe_x, probe_y = mx + n1[0] * _NORMAL_PROBE_EPS, my + n1[1] * _NORMAL_PROBE_EPS
-        outward = n1 if not _inside_polygon(probe_x, probe_y, vertices) else n2
+        outward = n1 if not _inside_polygon(probe_x, probe_y, [vertices]) else n2
         for k in range(_BOUNDARY_SAMPLES_PER_EDGE):
             frac = k / _BOUNDARY_SAMPLES_PER_EDGE
             px, py = ax + edx * elen * frac, ay + edy * elen * frac
@@ -510,16 +549,35 @@ def _offset_boundary_clockwise(polygon, offset):
     return samples
 
 
+def _nearest_ring_distance(px, py, ring):
+    """Nearest-edge distance from (px,py) to ONE boundary ring -- used
+    by _follow_boarder_control_points below to pick WHICH of an
+    obstacle's own rings (its outer boundary, or a specific hole) to
+    trace, when it has more than one. Byte-for-byte port of
+    problog_project's own _nearest_ring_distance."""
+    return min(math.hypot(px - cx, py - cy)
+               for (ax, ay), (bx, by) in _polygon_edges(ring)
+               for cx, cy in [_closest_point_on_segment(px, py, ax, ay, bx, by)])
+
+
 def _follow_boarder_control_points(sx, sy, obstacle_id, offset, obstacle_polygons):
     """Core computation -- unchanged from problog_project's own function
     of the same name, except obstacle_polygons arrives as a parameter
-    instead of a module-level global (see module docstring)."""
-    polygon = None
-    for oid, pts in obstacle_polygons:
+    instead of a module-level global (see module docstring). Picks
+    WHICHEVER of obstacle_id's own rings (its outer boundary, or a
+    specific hole) the robot's current position is closest to right
+    now -- matching problog_project's own ring-selection fix for a
+    perimeter fence's own hollow interior (see this module's own
+    _inside_polygon docstring)."""
+    rings = None
+    for oid, r in obstacle_polygons:
         if oid == obstacle_id:
-            polygon = pts
+            rings = r
             break
-    if polygon is None or len(polygon) < 3:
+    if not rings:
+        return None
+    polygon = min(rings, key=lambda ring: _nearest_ring_distance(sx, sy, ring))
+    if len(polygon) < 3:
         return None
 
     boundary = _offset_boundary_clockwise(polygon, offset)
@@ -565,8 +623,8 @@ def _voronoi_sites(obstacle_polygons):
     """Dense points sampled along every obstacle polygon's own boundary
     -- unchanged from problog_project's own function of the same name."""
     sites = []
-    for _oid, poly in obstacle_polygons:
-        for (ax, ay), (bx, by) in _polygon_edges(poly):
+    for _oid, rings in obstacle_polygons:
+        for (ax, ay), (bx, by) in _all_edges(rings):
             for k in range(_VORONOI_SAMPLES_PER_EDGE):
                 frac = k / _VORONOI_SAMPLES_PER_EDGE
                 sites.append((ax + (bx - ax) * frac, ay + (by - ay) * frac))
@@ -578,8 +636,8 @@ def _segment_crosses_any_obstacle(ax, ay, bx, by, obstacle_polygons):
     for k in range(_VORONOI_EDGE_CHECK_SAMPLES + 1):
         frac = k / _VORONOI_EDGE_CHECK_SAMPLES
         x, y = ax + (bx - ax) * frac, ay + (by - ay) * frac
-        for _oid, poly in obstacle_polygons:
-            if _inside_polygon(x, y, poly):
+        for _oid, rings in obstacle_polygons:
+            if _inside_polygon(x, y, rings):
                 return True
     return False
 
