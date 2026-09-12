@@ -23,14 +23,25 @@
 # One of: "DistanceBelow", "DistanceEqual", "DistanceOver",
 # "ObstacleInBound", "ObstacleOnPath", "BatteryBelow", "BatteryEqual",
 # "BatteryOver", "LineOfSightClear", "SampleValueBelow", "SampleValueEqual",
-# "SampleValueOver", "CollisionDetected" -- selects which fields below are
+# "SampleValueOver", "CollisionDetected", "Hitched", "Deployed",
+# "PloughedAt", "PloughedBetween" -- selects which fields below are
 # actually used, mirroring each condition's own ports in schema.yaml.
 string condition
 
 # Distance* / LineOfSightClear: the point to check against, world/map
-# frame metres. Unused by Obstacle*/Battery*/SampleValue*.
+# frame metres. PloughedAt/PloughedBetween: the point (PloughedAt) or
+# FIRST point (PloughedBetween's own p1) to check, same field reused --
+# both are just "a point", and PloughedBetween needs a second one
+# (p2_x/p2_y, below). Unused by Obstacle*/Battery*/SampleValue*/Hitched/
+# Deployed.
 float64 goal_x
 float64 goal_y
+
+# PloughedBetween only: the SECOND point (p2) of the swath to check --
+# see goal_x/goal_y above for the first (p1). Unused by every other
+# condition.
+float64 p2_x
+float64 p2_y
 
 # Distance* / ObstacleInBound / ObstacleOnPath: metres.
 # Battery*: percent, 0-100.
@@ -52,6 +63,12 @@ string sample_id
 # model.sdf's own chassis_contact_<side>) or "any" (true if ANY side is
 # currently in contact). Unused by every other condition.
 string side
+
+# Hitched: "cart", "plow", or empty/omitted to check "is ANYTHING
+# currently attached" instead of one specific kind -- matches
+# schema.yaml's own Hitched.kind (optional). Unused by every other
+# condition.
+string kind
 
 ---
 # Response

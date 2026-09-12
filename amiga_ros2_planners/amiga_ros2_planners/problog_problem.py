@@ -193,6 +193,18 @@ def sample_params(config):
     }
 
 
+def ploughing_params(config):
+    """{cell_size} for move_to_node's/condition_service_node's own
+    shared `plough_cell_size` param, from config.yaml's own ploughing.
+    cell_size -- 1.0 (metres) if missing entirely, a harmless default
+    for a problem that never configures ploughing (and so never uses
+    PloughedAt/PloughedBetween either -- see basic_action_theory.pl's
+    own plough_cell_size/1 note on why that predicate must still be
+    'known', even undefined, for such a problem)."""
+    ploughing_cfg = config.get("ploughing", {})
+    return {"cell_size": float(ploughing_cfg.get("cell_size", 1.0))}
+
+
 def tool_params(config):
     """Every config.yaml knob tool_action_node/move_to_node/
     battery_sim_node need for InstallTool/UninstallTool and their

@@ -106,4 +106,32 @@ class CollisionDetected : public EvaluateConditionBase {
   bool setRequest(Request::SharedPtr &request) override;
 };
 
+class Hitched : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class Deployed : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class PloughedAt : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
+class PloughedBetween : public EvaluateConditionBase {
+ public:
+  using EvaluateConditionBase::EvaluateConditionBase;
+  static BT::PortsList providedPorts();
+  bool setRequest(Request::SharedPtr &request) override;
+};
+
 }  // namespace amiga_bt

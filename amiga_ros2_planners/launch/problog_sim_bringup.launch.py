@@ -114,6 +114,7 @@ def generate_launch_description():
         "tool_moving_drain_rate_plow_deployed_pct_s")
     tool_instances = LaunchConfiguration("tool_instances")
     install_range = LaunchConfiguration("install_range")
+    plough_cell_size = LaunchConfiguration("plough_cell_size")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -188,6 +189,13 @@ def generate_launch_description():
         DeclareLaunchArgument("tool_instances", default_value="{}"),
         DeclareLaunchArgument("install_range", default_value="1.0"),
         DeclareLaunchArgument(
+            "plough_cell_size", default_value="1.0",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- MUST match this problem's own config.yaml "
+            "ploughing.cell_size (problog_problem.ploughing_params) for "
+            "PloughedAt/PloughedBetween to agree with move_to_node's own "
+            "marking."),
+        DeclareLaunchArgument(
             "expect_json", default_value="true",
             description="Forwarded to sim_bringup.launch.py -- set false "
             "for a mission with no second (orchard JSON) frame, e.g. a "
@@ -251,5 +259,6 @@ def generate_launch_description():
                 tool_moving_drain_rate_plow_deployed_pct_s),
             tool_instances=tool_instances,
             install_range=install_range,
+            plough_cell_size=plough_cell_size,
         ),
     ])

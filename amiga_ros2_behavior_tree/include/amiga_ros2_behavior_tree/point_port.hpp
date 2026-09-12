@@ -1,5 +1,6 @@
 #pragma once
 
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -26,6 +27,17 @@ inline bool parsePoint(const std::string &text, double &x, double &y) {
     return false;
   }
   return true;
+}
+
+// The inverse of parsePoint above -- formats (x,y) as the SAME "X;Y"
+// literal encoding, for a leaf whose OWN output port is a Point (e.g.
+// NearestToolOfKind's own `position`, typically bound straight into a
+// LATER leaf's own goal="{...}"/p1="{...}" Point-typed input port, no
+// separate conversion step needed on the tree author's own side).
+inline std::string formatPoint(double x, double y) {
+  std::ostringstream oss;
+  oss << x << ';' << y;
+  return oss.str();
 }
 
 }  // namespace amiga_bt

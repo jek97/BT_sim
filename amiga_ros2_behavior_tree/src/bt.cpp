@@ -30,6 +30,8 @@
 #include "amiga_ros2_behavior_tree/actions/uninstall_tool.hpp"
 #include "amiga_ros2_behavior_tree/actions/deploy_tool.hpp"
 #include "amiga_ros2_behavior_tree/actions/retract_tool.hpp"
+#include "amiga_ros2_behavior_tree/actions/hitched_id.hpp"
+#include "amiga_ros2_behavior_tree/actions/nearest_tool_of_kind.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -161,6 +163,14 @@ int main(int argc, char **argv) {
   RosNodeParams sample_params = ros_params;
   sample_params.default_port_value = "take_sample";
 
+  // tool_action_node.py's own "hitched_id"/"nearest_tool_of_kind"
+  // services -- same "advertised immediately at startup" shape as
+  // take_sample above, no tuned timeout needed.
+  RosNodeParams hitched_id_params = ros_params;
+  hitched_id_params.default_port_value = "hitched_id";
+  RosNodeParams nearest_tool_of_kind_params = ros_params;
+  nearest_tool_of_kind_params.default_port_value = "nearest_tool_of_kind";
+
   // tool_action_node.py's own "install_tool"/"uninstall_tool" actions are
   // ALSO advertised immediately at startup, same as "move_to" -- but they
   // share the exact same rclpy ActionServer-per-goal-name serialization
@@ -204,6 +214,12 @@ int main(int argc, char **argv) {
   factory.registerNodeType<SampleValueEqual>("SampleValueEqual", condition_params);
   factory.registerNodeType<SampleValueOver>("SampleValueOver", condition_params);
   factory.registerNodeType<CollisionDetected>("CollisionDetected", condition_params);
+  factory.registerNodeType<Hitched>("Hitched", condition_params);
+  factory.registerNodeType<Deployed>("Deployed", condition_params);
+  factory.registerNodeType<PloughedAt>("PloughedAt", condition_params);
+  factory.registerNodeType<PloughedBetween>("PloughedBetween", condition_params);
+  factory.registerNodeType<HitchedId>("HitchedId", hitched_id_params);
+  factory.registerNodeType<NearestToolOfKind>("NearestToolOfKind", nearest_tool_of_kind_params);
 
   std::string schema_path;
   try {

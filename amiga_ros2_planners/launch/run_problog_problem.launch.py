@@ -22,6 +22,10 @@ of this):
          moving_drain_rate_pct_s (problog_problem.battery_params) --
          so battery_sim_node drains at the SAME rates that problem's
          own theory assumes, not this package's made-up defaults.
+       - plough_cell_size (problog_problem.ploughing_params) -- so
+         PloughedAt/PloughedBetween (condition_service_node) discretize
+         positions at the SAME resolution move_to_node marks them
+         ploughed at.
   2. Adapts <problem_dir>/behavior_tree.xml into a temp file
      (adapt_tree.adapt_and_write) -- <Mission>/schema_location added,
      everything else byte-for-byte unchanged (see that module's own
@@ -81,6 +85,7 @@ def launch_setup(context, *args, **kwargs):
     battery = problog_problem.battery_params(config)
     sample = problog_problem.sample_params(config)
     tool = problog_problem.tool_params(config)
+    ploughing = problog_problem.ploughing_params(config)
 
     problem_name = os.path.basename(os.path.normpath(problem_dir)) or "problog_problem"
     tree_path = os.path.join(problem_dir, "behavior_tree.xml")
@@ -141,6 +146,7 @@ def launch_setup(context, *args, **kwargs):
                 tool["deployed_moving_drain_rate_pct_s"]["plow"]),
             "tool_instances": json.dumps(tool["tool_instances"]),
             "install_range": str(tool["install_range"]),
+            "plough_cell_size": str(ploughing["cell_size"]),
             "expect_json": "false",
             "payload_length_included": "false",
         }.items(),

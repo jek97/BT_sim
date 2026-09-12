@@ -15,6 +15,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/PlanPath.srv
   srv/EvaluateCondition.srv
   srv/TakeSample.srv
+  srv/HitchedId.srv
+  srv/NearestToolOfKind.srv
   action/MoveTo.action
   action/InstallTool.action
   action/UninstallTool.action

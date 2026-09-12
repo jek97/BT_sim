@@ -254,4 +254,70 @@ bool LineOfSightClear::setRequest(Request::SharedPtr &request) {
   return true;
 }
 
+// -- Hitched (optional kind) / Deployed (no ports) ------------------------
+
+BT::PortsList Hitched::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>(
+          "kind", "", "\"cart\" or \"plow\" -- omit to check \"is ANYTHING attached\"."),
+  });
+}
+
+bool Hitched::setRequest(Request::SharedPtr &request) {
+  std::string kind;
+  getInput("kind", kind);
+  request->condition = "Hitched";
+  request->kind = kind;
+  return true;
+}
+
+BT::PortsList Deployed::providedPorts() { return providedBasicPorts({}); }
+
+bool Deployed::setRequest(Request::SharedPtr &request) {
+  request->condition = "Deployed";
+  return true;
+}
+
+// -- PloughedAt (goal) / PloughedBetween (p1 + p2) -------------------------
+
+BT::PortsList PloughedAt::providedPorts() {
+  return providedBasicPorts({BT::InputPort<std::string>("goal", "point to check, \"X;Y\"")});
+}
+
+bool PloughedAt::setRequest(Request::SharedPtr &request) {
+  std::string goal_text;
+  double gx = 0.0, gy = 0.0;
+  if (!getInput("goal", goal_text) || !parsePoint(goal_text, gx, gy)) {
+    RCLCPP_ERROR(logger(), "PloughedAt: missing/malformed goal");
+    return false;
+  }
+  request->condition = "PloughedAt";
+  request->goal_x = gx;
+  request->goal_y = gy;
+  return true;
+}
+
+BT::PortsList PloughedBetween::providedPorts() {
+  return providedBasicPorts({
+      BT::InputPort<std::string>("p1", "one end of the swath to check, \"X;Y\""),
+      BT::InputPort<std::string>("p2", "the other end of the swath to check, \"X;Y\""),
+  });
+}
+
+bool PloughedBetween::setRequest(Request::SharedPtr &request) {
+  std::string p1_text, p2_text;
+  double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0;
+  if (!getInput("p1", p1_text) || !parsePoint(p1_text, x1, y1) ||
+      !getInput("p2", p2_text) || !parsePoint(p2_text, x2, y2)) {
+    RCLCPP_ERROR(logger(), "PloughedBetween: missing/malformed p1 or p2");
+    return false;
+  }
+  request->condition = "PloughedBetween";
+  request->goal_x = x1;
+  request->goal_y = y1;
+  request->p2_x = x2;
+  request->p2_y = y2;
+  return true;
+}
+
 }  // namespace amiga_bt

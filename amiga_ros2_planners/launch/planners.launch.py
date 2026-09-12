@@ -192,6 +192,17 @@ def generate_launch_description():
             "tool_moving_drain_rate_<tool>_pct_s while deployed."),
         DeclareLaunchArgument(
             "tool_moving_drain_rate_plow_deployed_pct_s", default_value="0.1"),
+        DeclareLaunchArgument(
+            "plough_cell_size", default_value="1.0",
+            description="This problem's own config.yaml ploughing.cell_size "
+            "(problog_problem.ploughing_params) -- MUST match between "
+            "move_to_node (which marks cells ploughed) and "
+            "condition_service_node (which queries them for "
+            "PloughedAt/PloughedBetween)."),
+        DeclareLaunchArgument(
+            "ploughed_cells_topic", default_value="ploughed_cells",
+            description="Latched topic move_to_node publishes the "
+            "ploughed-cell set on; condition_service_node subscribes."),
 
         # Pointless (and noisy -- it would wait forever for an orchard
         # JSON that never arrives) in problog_problem mode, where A*
@@ -256,6 +267,10 @@ def generate_launch_description():
                 "problog_frame_yaw_deg": LaunchConfiguration("problog_frame_yaw_deg"),
                 "obstacle_source": LaunchConfiguration("obstacle_source"),
                 "problem_dir": LaunchConfiguration("problem_dir"),
+                "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
+                "ploughed_cells_topic": LaunchConfiguration("ploughed_cells_topic"),
+                "plough_cell_size": LaunchConfiguration("plough_cell_size"),
             }],
         ),
         Node(
@@ -282,6 +297,8 @@ def generate_launch_description():
                     "tool_speed_cart_deployed_mps"),
                 "tool_speed_plow_deployed_mps": LaunchConfiguration(
                     "tool_speed_plow_deployed_mps"),
+                "ploughed_cells_topic": LaunchConfiguration("ploughed_cells_topic"),
+                "plough_cell_size": LaunchConfiguration("plough_cell_size"),
             }],
         ),
         Node(

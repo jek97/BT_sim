@@ -1,0 +1,34 @@
+# NearestToolOfKind.srv
+#
+# The ROS2-service form of problog_project's NearestToolOfKind BT node
+# (see module/contracts/schema.yaml's own entry). A service, not an
+# action, because it's INSTANTANEOUS -- a pure, side-effect-free lookup
+# against tool_action_node's own tracked tool_instances table, same "no
+# Duration/Triggers" shape as HitchedId/TakeSample/PlanPath.
+#
+# Server: amiga_ros2_planners' tool_action_node. Picks whichever FREE
+# (not currently hitched) instance of `kind` is closest to the robot's
+# own CURRENT tf2 position right now -- ties broken arbitrarily (first
+# found), same as this project's own ProbLog nearest_tool_of_kind_query
+# reference implementation makes no stronger guarantee either.
+
+# "cart", "plow", or any future kind -- not validated against a fixed
+# set here (this node never parses config.yaml itself, just whatever
+# tool_instances JSON it was launched with).
+string kind
+---
+# One of "nearest_tool_found"/"no_tool_of_kind" -- matches schema.yaml's
+# own documented Reason values for this action.
+string reason
+
+# true iff reason is "nearest_tool_found".
+bool status
+
+# The closest matching instance's own id. Meaningless when status is
+# false.
+string id
+
+# That instance's own current (X,Y), world/map frame metres.
+# Meaningless when status is false.
+float64 x
+float64 y

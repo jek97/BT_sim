@@ -52,6 +52,8 @@ add_executable(bt_runner
   src/actions/evaluate_condition_base.cpp
   src/actions/evaluate_conditions.cpp
   src/actions/take_sample.cpp
+  src/actions/hitched_id.cpp
+  src/actions/nearest_tool_of_kind.cpp
 )
 
 add_executable(dummy_wp_server src/mocks/dummy_wp_server.cpp)

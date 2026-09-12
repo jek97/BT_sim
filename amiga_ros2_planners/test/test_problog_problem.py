@@ -89,6 +89,14 @@ def test_sample_params_defaults_when_missing():
         "success_probability": 0.5, "value_mean": 5.0, "value_sigma": 2.0}
 
 
+def test_ploughing_params_from_config():
+    assert pp.ploughing_params({"ploughing": {"cell_size": 0.5}}) == {"cell_size": 0.5}
+
+
+def test_ploughing_params_defaults_when_missing():
+    assert pp.ploughing_params({}) == {"cell_size": 1.0}
+
+
 def test_tool_params_defaults_when_missing():
     params = pp.tool_params({})
     assert params["install_duration_s"] == {"cart": 10.0, "plow": 10.0}

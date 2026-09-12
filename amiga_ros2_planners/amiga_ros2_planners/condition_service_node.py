@@ -54,6 +54,20 @@ than a situation history:
                                  package's own README on why every
                                  other condition here is a simplified
                                  stand-in, not this one).
+  Hitched/Deployed             -- reads tool_action_node's own latched
+                                 tool_state/tool_deployed topics (the
+                                 SAME state InstallTool/UninstallTool/
+                                 DeployTool/RetractTool maintain), not a
+                                 fresh computation of any kind.
+  PloughedAt/PloughedBetween   -- reads move_to_node's own latched
+                                 ploughed_cells topic (the set of
+                                 macro-cells a deployed plow has
+                                 actually passed through -- see that
+                                 node's own _mark_ploughed_here
+                                 docstring), discretized through this
+                                 SAME `plough_cell_size` param
+                                 move_to_node uses (ploughing.py's
+                                 cell_index/bresenham_cells).
 
 Two obstacle sources, selected by `obstacle_source` (see
 plan_service_node.py's own module docstring for the full rationale --
@@ -87,6 +101,7 @@ from amiga_ros2_planners import polygon_geometry, problog_problem
 from amiga_ros2_planners.frame_transform import ProblogFrameTransform
 from amiga_ros2_planners.geometry import nearest_obstacle, line_of_sight_clear
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
+from amiga_ros2_planners.ploughing import bresenham_cells, cell_index
 from amiga_ros2_planners.pose import PoseProvider
 
 # Conditions whose goal_x/goal_y is a point to transform from a
@@ -95,7 +110,13 @@ from amiga_ros2_planners.pose import PoseProvider
 # goal point at all, so they're left out on purpose.
 _GOAL_FRAME_CONDITIONS = frozenset({
     "DistanceBelow", "DistanceEqual", "DistanceOver", "LineOfSightClear",
+    "PloughedAt", "PloughedBetween",
 })
+
+# PloughedBetween ALSO carries a second point (p2_x/p2_y) needing the
+# SAME transform as goal_x/goal_y above -- every other _GOAL_FRAME_
+# CONDITIONS member has only the one point.
+_P2_FRAME_CONDITIONS = frozenset({"PloughedBetween"})
 
 _CONTACT_SIDES = ("front", "back", "left", "right")
 
@@ -119,6 +140,12 @@ class ConditionServiceNode(Node):
         self.declare_parameter("contact_topic_left", "chassis/contact_left")
         self.declare_parameter("contact_topic_right", "chassis/contact_right")
         self.declare_parameter("contact_stale_after_s", 0.5)
+        self.declare_parameter("tool_state_topic", "tool_state")
+        self.declare_parameter("tool_deployed_topic", "tool_deployed")
+        self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
+        # MUST match move_to_node's own plough_cell_size -- see that
+        # node's own module docstring.
+        self.declare_parameter("plough_cell_size", 1.0)
         # Identity by default -- MUST match plan_service_node's own
         # problog_frame_origin_x/y/yaw_deg params, or a DistanceBelow
         # checked against the "same" goal PlanWith just targeted would
@@ -198,6 +225,32 @@ class ConditionServiceNode(Node):
                 Contacts, self.get_parameter(f"contact_topic_{side}").value,
                 (lambda msg, side=side: self._on_contact(side, msg)), 10)
 
+        # Hitched/Deployed -- tool_action_node's own latched tool_state/
+        # tool_deployed topics (see this file's own module docstring).
+        # "free"/False are tool_action_node's own initial published
+        # values, so these defaults are correct even before this node's
+        # subscriptions receive their first message.
+        self._equipped_tool = "free"
+        self.create_subscription(
+            String, self.get_parameter("tool_state_topic").value,
+            self._on_tool_state, 10)
+        self._deployed = False
+        self.create_subscription(
+            String, self.get_parameter("tool_deployed_topic").value,
+            self._on_tool_deployed, 10)
+
+        # PloughedAt/PloughedBetween -- move_to_node's own latched
+        # ploughed_cells topic (a JSON list of [cx,cy] pairs). TRANSIENT_
+        # LOCAL so this node gets the CURRENT full set immediately on
+        # subscribing, same reasoning as sample_values above.
+        self._ploughed_cells = set()
+        ploughed_cells_qos = QoSProfile(depth=1)
+        ploughed_cells_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        ploughed_cells_qos.reliability = ReliabilityPolicy.RELIABLE
+        self.create_subscription(
+            String, self.get_parameter("ploughed_cells_topic").value,
+            self._on_ploughed_cells, ploughed_cells_qos)
+
         self._handlers = {
             "DistanceBelow": self._distance_below,
             "DistanceEqual": self._distance_equal,
@@ -212,6 +265,10 @@ class ConditionServiceNode(Node):
             "SampleValueEqual": self._sample_value_equal,
             "SampleValueOver": self._sample_value_over,
             "CollisionDetected": self._collision_detected,
+            "Hitched": self._hitched,
+            "Deployed": self._deployed_condition,
+            "PloughedAt": self._ploughed_at,
+            "PloughedBetween": self._ploughed_between,
         }
 
         # Wait for tf2's first pose AND the first BatteryState message
@@ -249,6 +306,42 @@ class ConditionServiceNode(Node):
     def _on_contact(self, side, msg):
         if msg.contacts:
             self._last_contact_time[side] = self.get_clock().now()
+
+    def _on_tool_state(self, msg):
+        self._equipped_tool = msg.data
+
+    def _on_tool_deployed(self, msg):
+        self._deployed = msg.data == "true"
+
+    def _on_ploughed_cells(self, msg):
+        self._ploughed_cells = {tuple(cell) for cell in json.loads(msg.data)}
+
+    # -- Hitched/Deployed -------------------------------------------------
+    def _hitched(self, request, response):
+        if request.kind:
+            response.result = self._equipped_tool == request.kind
+        else:
+            response.result = self._equipped_tool != "free"
+        return response
+
+    def _deployed_condition(self, request, response):
+        response.result = self._deployed
+        return response
+
+    # -- PloughedAt/PloughedBetween ----------------------------------------
+    def _ploughed_at(self, request, response):
+        cell_size = self.get_parameter("plough_cell_size").value
+        cell = (cell_index(request.goal_x, cell_size), cell_index(request.goal_y, cell_size))
+        response.result = cell in self._ploughed_cells
+        return response
+
+    def _ploughed_between(self, request, response):
+        cell_size = self.get_parameter("plough_cell_size").value
+        cx0, cy0 = cell_index(request.goal_x, cell_size), cell_index(request.goal_y, cell_size)
+        cx1, cy1 = cell_index(request.p2_x, cell_size), cell_index(request.p2_y, cell_size)
+        cells = bresenham_cells(cx0, cy0, cx1, cy1)
+        response.result = all(cell in self._ploughed_cells for cell in cells)
+        return response
 
     # -- CollisionDetected ------------------------------------------------
     def _collision_detected(self, request, response):
@@ -450,6 +543,9 @@ class ConditionServiceNode(Node):
         if request.condition in _GOAL_FRAME_CONDITIONS:
             request.goal_x, request.goal_y = self._goal_transform.to_sim_frame(
                 request.goal_x, request.goal_y)
+        if request.condition in _P2_FRAME_CONDITIONS:
+            request.p2_x, request.p2_y = self._goal_transform.to_sim_frame(
+                request.p2_x, request.p2_y)
         return handler(request, response)
 
 

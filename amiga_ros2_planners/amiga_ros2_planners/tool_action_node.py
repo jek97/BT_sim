@@ -16,6 +16,15 @@ four -- no path, no odometry noise, no FollowPath goal at all, just a
 wall-clock wait with periodic trigger polling (move_to_node's own
 _execute() loop, minus the FollowPath half).
 
+Also hosts HitchedId/NearestToolOfKind (amiga_interfaces/srv/
+{HitchedId,NearestToolOfKind}) -- the ROS2-SERVICE form of
+problog_project's own query leaves of the same name (schema.yaml),
+INSTANTANEOUS and side-effect-free, unlike the four durative actions
+above. Both read this SAME node's own in-memory _equipped_tool/
+_equipped_instance_id/_tool_instances state (see _on_hitched_id/
+_on_nearest_tool_of_kind below) -- exactly the state Install/Uninstall/
+Deploy/RetractTool already maintain, not a second source of truth.
+
 TOOL INSTANCES (problog_project's own tool-instance-id refactor): a BT
 tree's `tool` port on any of the four actions above names a specific
 tool INSTANCE id (e.g. "cart1"), not a kind -- multiple instances of
@@ -92,7 +101,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 
 from amiga_interfaces.action import InstallTool, UninstallTool, DeployTool, RetractTool
-from amiga_interfaces.srv import EvaluateCondition
+from amiga_interfaces.srv import EvaluateCondition, HitchedId, NearestToolOfKind
 from amiga_ros2_planners.pose import PoseProvider
 
 _TOOL_KINDS = ("cart", "plow")
@@ -217,9 +226,55 @@ class ToolActionNode(Node):
                 callback_group=self._cb_group),
         ]
 
+        # HitchedId/NearestToolOfKind -- INSTANTANEOUS, side-effect-free
+        # queries against this SAME in-memory state (_equipped_tool/
+        # _equipped_instance_id/_tool_instances), same "one node, one
+        # source of truth" reasoning as everything else this node
+        # tracks -- see each .srv's own header for the full rationale.
+        self.create_service(HitchedId, "hitched_id", self._on_hitched_id)
+        self.create_service(
+            NearestToolOfKind, "nearest_tool_of_kind", self._on_nearest_tool_of_kind)
+
         self.get_logger().info(
             "tool_action_node ready on 'install_tool'/'uninstall_tool'/"
-            "'deploy_tool'/'retract_tool'")
+            "'deploy_tool'/'retract_tool'/'hitched_id'/'nearest_tool_of_kind'")
+
+    def _on_hitched_id(self, request, response):
+        if self._equipped_instance_id is None:
+            response.reason, response.status, response.id = (
+                "hitched_id_unavailable", False, "")
+            return response
+        response.reason = "hitched_id_found"
+        response.status = True
+        response.id = self._equipped_instance_id
+        return response
+
+    def _on_nearest_tool_of_kind(self, request, response):
+        """Closest FREE (not currently hitched) instance of request.kind
+        to the robot's own current position -- basic_action_theory.pl's
+        own tool_position/4 excludes a hitched instance (see this
+        module's own docstring), so _equipped_instance_id is skipped
+        even if its own kind matches."""
+        xy = self._pose.get_xy()
+        if xy is None:
+            response.reason, response.status = "no_tool_of_kind", False
+            return response
+        candidates = [
+            (tool_id, instance) for tool_id, instance in self._tool_instances.items()
+            if instance["kind"] == request.kind and tool_id != self._equipped_instance_id
+        ]
+        if not candidates:
+            response.reason, response.status = "no_tool_of_kind", False
+            return response
+        tool_id, instance = min(
+            candidates,
+            key=lambda item: (item[1]["x"] - xy[0]) ** 2 + (item[1]["y"] - xy[1]) ** 2)
+        response.reason = "nearest_tool_found"
+        response.status = True
+        response.id = tool_id
+        response.x = instance["x"]
+        response.y = instance["y"]
+        return response
 
     def _publish_tool_state(self):
         self._tool_state_pub.publish(String(data=self._equipped_tool))

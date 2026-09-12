@@ -1,0 +1,29 @@
+# HitchedId.srv
+#
+# The ROS2-service form of problog_project's HitchedId BT node (see
+# module/contracts/schema.yaml's own HitchedId entry). A service, not
+# an action, because it's INSTANTANEOUS -- a pure, side-effect-free
+# lookup against tool_action_node's own tracked hitch state, same "no
+# Duration/Triggers" shape as ToolPosition/ToolsOfKind/NearestToolOfKind
+# and TakeSample/PlanPath.
+#
+# Server: amiga_ros2_planners' tool_action_node -- the same node that
+# tracks _equipped_tool/_equipped_instance_id for InstallTool/
+# UninstallTool/DeployTool/RetractTool already, so this is a read of
+# that SAME in-memory state, not a separate source of truth.
+#
+# No request fields -- unlike ToolPosition/ToolsOfKind/NearestToolOfKind
+# (all keyed by an id/kind the caller supplies), HitchedId reports on
+# the hitch's own CURRENT state directly: "whatever is hitched right
+# now", if anything.
+---
+# One of "hitched_id_found"/"hitched_id_unavailable" -- matches
+# schema.yaml's own documented Reason values for this action.
+string reason
+
+# true iff reason is "hitched_id_found".
+bool status
+
+# The currently-hitched instance's own id (e.g. "plow1"), if any.
+# Meaningless when status is false.
+string id

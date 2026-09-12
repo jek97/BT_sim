@@ -160,6 +160,8 @@
             <xs:element name="UninstallTool" type="uninstallToolType" />
             <xs:element name="DeployTool" type="deployToolType" />
             <xs:element name="RetractTool" type="retractToolType" />
+            <xs:element name="HitchedId" type="hitchedIdType" />
+            <xs:element name="NearestToolOfKind" type="nearestToolOfKindType" />
             <xs:element ref="SubTree" />
         </xs:choice>
     </xs:group>
@@ -200,6 +202,10 @@
             <xs:element name="SampleValueEqual" type="sampleValueEqualType" />
             <xs:element name="SampleValueOver" type="sampleValueOverType" />
             <xs:element name="CollisionDetected" type="collisionDetectedType" />
+            <xs:element name="Hitched" type="hitchedType" />
+            <xs:element name="Deployed" type="deployedType" />
+            <xs:element name="PloughedAt" type="ploughedAtType" />
+            <xs:element name="PloughedBetween" type="ploughedBetweenType" />
         </xs:choice>
     </xs:group>
 
@@ -525,6 +531,34 @@
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
+    <!-- HitchedId — instantaneous, no input ports at all (reports on
+         the hitch's own CURRENT state directly — see HitchedId.srv's
+         own header for why). service_name is fixed, naming
+         amiga_ros2_planners' tool_action_node's own "hitched_id"
+         service. -->
+    <xs:complexType name="hitchedIdType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="service_name" type="xs:string" use="optional"
+            fixed="hitched_id" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+        <xs:attribute name="id" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- NearestToolOfKind — instantaneous, keyed by `kind`. service_name
+         is fixed, naming amiga_ros2_planners' tool_action_node's own
+         "nearest_tool_of_kind" service. -->
+    <xs:complexType name="nearestToolOfKindType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="service_name" type="xs:string" use="optional"
+            fixed="nearest_tool_of_kind" />
+        <xs:attribute name="kind" type="xs:string" use="required" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+        <xs:attribute name="id" type="portValueType" use="optional" />
+        <xs:attribute name="position" type="portValueType" use="optional" />
+    </xs:complexType>
+
     <!-- Distance* — shared shape (goal + threshold), three functors -->
     <xs:complexType name="distanceBelowType">
         <xs:attribute name="name" type="taskNameType" use="optional" />
@@ -620,6 +654,34 @@
         <xs:attribute name="name" type="taskNameType" use="optional" />
         <xs:attribute name="obstacle_id" type="xs:string" use="required" />
         <xs:attribute name="goal" type="portValueType" use="required" />
+    </xs:complexType>
+
+    <!-- Hitched — optional `kind`; omit to check "is ANYTHING attached"
+         instead of one specific kind (see condition_service_node.py's
+         own _hitched). -->
+    <xs:complexType name="hitchedType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="kind" type="xs:string" use="optional" />
+    </xs:complexType>
+
+    <!-- Deployed — no ports at all: only ONE tool can ever be hitched
+         at a time, so there is nothing to parametrize. -->
+    <xs:complexType name="deployedType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+    </xs:complexType>
+
+    <!-- PloughedAt / PloughedBetween — reads move_to_node's own
+         ploughed_cells state (see that node's own _mark_ploughed_here
+         docstring), NOT a live geometry/battery lookup like every
+         condition above. -->
+    <xs:complexType name="ploughedAtType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="goal" type="portValueType" use="required" />
+    </xs:complexType>
+    <xs:complexType name="ploughedBetweenType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="p1" type="portValueType" use="required" />
+        <xs:attribute name="p2" type="portValueType" use="required" />
     </xs:complexType>
 
     <!-- TODO: enable these later (unchanged from the base schema) -->

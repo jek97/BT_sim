@@ -49,6 +49,7 @@ here to run it against) -- the Bezier sampling
 integration itself should be smoke-tested against your own sim before
 relying on it.
 """
+import json
 import math
 import re
 import time
@@ -57,6 +58,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer, ActionClient, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
@@ -68,6 +70,7 @@ from std_msgs.msg import String
 from amiga_interfaces.action import MoveTo
 from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners.bezier import sample_bezier_chain
+from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
 
 # e.g. "battery_below(20)" -> ("battery_below", "20"). Matches the
@@ -147,6 +150,17 @@ class MoveToNode(Node):
             "controller_server_set_parameters_service",
             "controller_server/set_parameters")
         self.declare_parameter("tool_state_topic", "tool_state")
+        # ploughed/3 (basic_action_theory.pl) -- the cell-indexed
+        # fluent PloughedAt/PloughedBetween query. This problem's own
+        # config.yaml ploughing.cell_size (problog_problem.
+        # ploughing_params); 1.0 here is just a harmless default for a
+        # mission that never configures ploughing.cell_size at all (no
+        # PloughedAt/PloughedBetween in its own tree either, so the
+        # exact value is moot then). MUST match condition_service_node's
+        # own plough_cell_size param, or a cell boundary could land on
+        # different (Cx,Cy) indices between the two.
+        self.declare_parameter("plough_cell_size", 1.0)
+        self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
 
         # local_costmap (which controller_server's FollowPath needs a
         # working state estimate to run against) looks up base_link->odom,
@@ -159,6 +173,19 @@ class MoveToNode(Node):
         self._odom_pose = PoseProvider(
             self,
             self.get_parameter("odom_frame").value,
+            self.get_parameter("base_frame").value,
+        )
+        # reference_frame pose -- see _mark_ploughed_here below. A
+        # SEPARATE PoseProvider from _odom_pose above: that one exists
+        # only to gate sending a FollowPath goal (odom_frame->base_frame
+        # needs to exist yet), this one is the same reference_frame
+        # (typically "map") pose every OTHER condition/query in this
+        # package (condition_service_node.py, tool_action_node.py) reads
+        # positions in -- ploughed cells must line up with THOSE, not
+        # with odom.
+        self._pose = PoseProvider(
+            self,
+            self.get_parameter("reference_frame").value,
             self.get_parameter("base_frame").value,
         )
 
@@ -215,6 +242,21 @@ class MoveToNode(Node):
             String, self.get_parameter("tool_deployed_topic").value,
             self._on_tool_deployed, 10, callback_group=self._cb_group)
 
+        # ploughed/3 -- see _mark_ploughed_here's own docstring. Latched
+        # (TRANSIENT_LOCAL) so condition_service_node's own
+        # PloughedAt/PloughedBetween handlers get the CURRENT full set
+        # immediately on subscribing, regardless of node startup order
+        # -- same convention sample_service_node's own sample_values
+        # topic already uses.
+        ploughed_cells_qos = QoSProfile(depth=1)
+        ploughed_cells_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        ploughed_cells_qos.reliability = ReliabilityPolicy.RELIABLE
+        self._ploughed_cells_pub = self.create_publisher(
+            String, self.get_parameter("ploughed_cells_topic").value,
+            ploughed_cells_qos)
+        self._ploughed_cells = set()
+        self._publish_ploughed_cells()
+
         self._action_server = ActionServer(
             self, MoveTo, "move_to", self._execute,
             cancel_callback=lambda _goal_handle: CancelResponse.ACCEPT,
@@ -227,6 +269,33 @@ class MoveToNode(Node):
 
     def _on_tool_deployed(self, msg):
         self._deployed = msg.data == "true"
+
+    def _publish_ploughed_cells(self):
+        self._ploughed_cells_pub.publish(
+            String(data=json.dumps(sorted(self._ploughed_cells))))
+
+    def _mark_ploughed_here(self):
+        """ploughed/3 (basic_action_theory.pl): marks the macro-cell
+        under the robot's own CURRENT position as ploughed. Called
+        periodically through a walk (see _execute's own poll loop) --
+        NOT problog_project's own bracket-sampled-along-the-nominal-
+        spline approach (there is no synthetic noisy spline here, Nav2
+        drives the robot for real), so this samples the genuinely
+        actual path instead, at the same cadence _check_triggers
+        already polls at. Caller (_execute) is responsible for only
+        calling this while the walk started with the plow both hitched
+        AND deployed -- see basic_action_theory.pl's own ploughed/3
+        note (hitch(plow,SPrev), deployed(SPrev)) for why: this method
+        itself does not re-check either, so it can also be called once
+        more right after a walk ends to catch the final resting cell."""
+        xy = self._pose.get_xy()
+        if xy is None:
+            return
+        cell_size = self.get_parameter("plough_cell_size").value
+        cell = (cell_index(xy[0], cell_size), cell_index(xy[1], cell_size))
+        if cell not in self._ploughed_cells:
+            self._ploughed_cells.add(cell)
+            self._publish_ploughed_cells()
 
     def _apply_tool_speed(self, controller_id):
         """Best-effort: sets <controller>.desired_linear_vel on
@@ -409,62 +478,84 @@ class MoveToNode(Node):
         max_walk_duration = self.get_parameter("max_walk_duration_s").value
         walk_start = time.monotonic()
 
-        fired_trigger = None
-        while not get_result_future.done():
-            time.sleep(poll_period)
-            if get_result_future.done():
-                break
-            if time.monotonic() - walk_start > max_walk_duration:
-                self.get_logger().error(
-                    f"MoveTo: no result after {max_walk_duration}s, "
-                    "cancelling (see max_walk_duration_s's own comment "
-                    "-- this walk has no Nav2 recovery layer of its own)")
-                cancel_future = follow_path_goal_handle.cancel_goal_async()
-                self._wait_for_future(cancel_future, timeout_sec=2.0)
-                self._wait_for_future(get_result_future, timeout_sec=2.0)
-                goal_handle.abort()
-                result.reason, result.status = "timeout", False
+        # ploughed/3 (basic_action_theory.pl): TRUE for this leg's own
+        # whole span iff the plow was BOTH hitched AND deployed right
+        # before this walk started -- checked ONCE here, not re-checked
+        # per poll, matching hitch(plow,SPrev)/deployed(SPrev)'s own
+        # "provably constant for the whole span of one walk" invariant
+        # (tool state can only change between BT leaves, via a
+        # sequential InstallTool/DeployTool/etc leaf, never DURING a
+        # MoveTo). See _mark_ploughed_here's own docstring for the
+        # marking itself -- called here at start, every poll, and once
+        # more (in `finally`) after the walk ends, so the leg's start
+        # AND final resting cell are both covered even on an early
+        # cancel/trigger/timeout, not just a full completion.
+        should_plough = self._deployed and self._equipped_tool == "plow"
+        if should_plough:
+            self._mark_ploughed_here()
+
+        try:
+            fired_trigger = None
+            while not get_result_future.done():
+                time.sleep(poll_period)
+                if should_plough:
+                    self._mark_ploughed_here()
+                if get_result_future.done():
+                    break
+                if time.monotonic() - walk_start > max_walk_duration:
+                    self.get_logger().error(
+                        f"MoveTo: no result after {max_walk_duration}s, "
+                        "cancelling (see max_walk_duration_s's own comment "
+                        "-- this walk has no Nav2 recovery layer of its own)")
+                    cancel_future = follow_path_goal_handle.cancel_goal_async()
+                    self._wait_for_future(cancel_future, timeout_sec=2.0)
+                    self._wait_for_future(get_result_future, timeout_sec=2.0)
+                    goal_handle.abort()
+                    result.reason, result.status = "timeout", False
+                    return result
+                if goal_handle.is_cancel_requested:
+                    # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
+                    # waits for THIS action's own result before a containing
+                    # ReactiveSequence/Fallback can move on (e.g. to problog's
+                    # own GoHome branch once BatteryOver fails) -- worst case
+                    # here is trigger_poll_period_s (noticing the cancel) plus
+                    # these two timeouts, so keep them tight; Nav2's own
+                    # cancel ack/result normally arrive in well under a
+                    # second on a local controller_server.
+                    cancel_future = follow_path_goal_handle.cancel_goal_async()
+                    self._wait_for_future(cancel_future, timeout_sec=2.0)
+                    self._wait_for_future(get_result_future, timeout_sec=2.0)
+                    goal_handle.canceled()
+                    result.reason, result.status = "canceled", False
+                    return result
+                if parsed_triggers:
+                    fired_trigger = self._check_triggers(parsed_triggers)
+                    if fired_trigger is not None:
+                        cancel_future = follow_path_goal_handle.cancel_goal_async()
+                        self._wait_for_future(cancel_future, timeout_sec=5.0)
+                        self._wait_for_future(get_result_future, timeout_sec=5.0)
+                        break
+
+            if fired_trigger is not None:
+                goal_handle.succeed()
+                result.reason, result.status = fired_trigger, False
                 return result
-            if goal_handle.is_cancel_requested:
-                # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
-                # waits for THIS action's own result before a containing
-                # ReactiveSequence/Fallback can move on (e.g. to problog's
-                # own GoHome branch once BatteryOver fails) -- worst case
-                # here is trigger_poll_period_s (noticing the cancel) plus
-                # these two timeouts, so keep them tight; Nav2's own
-                # cancel ack/result normally arrive in well under a
-                # second on a local controller_server.
-                cancel_future = follow_path_goal_handle.cancel_goal_async()
-                self._wait_for_future(cancel_future, timeout_sec=2.0)
-                self._wait_for_future(get_result_future, timeout_sec=2.0)
+
+            follow_path_result = get_result_future.result()
+            status = follow_path_result.status
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                goal_handle.succeed()
+                result.reason, result.status = "completed", True
+            elif status == GoalStatus.STATUS_CANCELED:
                 goal_handle.canceled()
                 result.reason, result.status = "canceled", False
-                return result
-            if parsed_triggers:
-                fired_trigger = self._check_triggers(parsed_triggers)
-                if fired_trigger is not None:
-                    cancel_future = follow_path_goal_handle.cancel_goal_async()
-                    self._wait_for_future(cancel_future, timeout_sec=5.0)
-                    self._wait_for_future(get_result_future, timeout_sec=5.0)
-                    break
-
-        if fired_trigger is not None:
-            goal_handle.succeed()
-            result.reason, result.status = fired_trigger, False
+            else:
+                goal_handle.abort()
+                result.reason, result.status = "aborted", False
             return result
-
-        follow_path_result = get_result_future.result()
-        status = follow_path_result.status
-        if status == GoalStatus.STATUS_SUCCEEDED:
-            goal_handle.succeed()
-            result.reason, result.status = "completed", True
-        elif status == GoalStatus.STATUS_CANCELED:
-            goal_handle.canceled()
-            result.reason, result.status = "canceled", False
-        else:
-            goal_handle.abort()
-            result.reason, result.status = "aborted", False
-        return result
+        finally:
+            if should_plough:
+                self._mark_ploughed_here()
 
     def _on_follow_path_feedback(self, feedback_msg, goal_handle):
         fb = MoveTo.Feedback()

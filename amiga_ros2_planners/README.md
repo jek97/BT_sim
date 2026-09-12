@@ -62,11 +62,11 @@ can't make an unbuilt leaf tick.
 | `amiga_ros2_planners/orchard_obstacles.py` | new | Subscribes to the same tree-info JSON topic `orchard_management_node` already caches; converts every tree into a circular `Obstacle`. Accepts both JSON shapes this repo's own fixtures carry (see its own docstring). |
 | `amiga_ros2_planners/pose.py` | new | tf2-based current-position lookup. This simulation's replacement for problog_project's `now/2 + at/4` situation fluent. |
 | `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm`. |
-| `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`**, plus `CollisionDetected` (this simulation's own addition, no `schema.yaml` counterpart): reads whether `amiga_kinova/model.sdf`'s own `chassis_contact_<front\|back\|left\|right>` Gazebo contact sensors currently report contact — genuine physics collision between the robot's real collision shape and the environment's, not the tf2-vs-tracked-obstacle-list approximation every other condition here uses. |
+| `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`** (including `Hitched`/`Deployed`, read from `tool_action_node`'s own latched `tool_state`/`tool_deployed` topics, and `PloughedAt`/`PloughedBetween`, read from `move_to_node`'s own latched `ploughed_cells` topic), plus `CollisionDetected` (this simulation's own addition, no `schema.yaml` counterpart): reads whether `amiga_kinova/model.sdf`'s own `chassis_contact_<front\|back\|left\|right>` Gazebo contact sensors currently report contact — genuine physics collision between the robot's real collision shape and the environment's, not the tf2-vs-tracked-obstacle-list approximation every other condition here uses. |
 | `amiga_ros2_planners/battery_sim_node.py` | new | A simulated battery percentage (this simulation has no real one) so `Battery*` conditions have something to read. |
 | `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls a real subset of `triggers` against `condition_service_node` and cancels early if one fires. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. |
 | `amiga_ros2_planners/sample_service_node.py` | new | Hosts `TakeSample.srv` — the ROS2-service form of `TakeSample`: one `random.random() < success_probability` draw, the literal formula `problog_project/module/contracts/bt_actions.py`'s own `bt_take_sample` uses. On success, also draws a VALUE (0-10, `sample.value.mean`/`.sigma`, a discretized Normal) keyed by the tree's own `id="..."` port, and republishes every id's own value in full on a latched `sample_values` topic (JSON) — `condition_service_node` subscribes to answer `SampleValueBelow`/`Equal`/`Over`. |
-| `amiga_ros2_planners/tool_action_node.py` | new | Hosts `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` (actions) — fixed-Duration, no motion, same start/halt/triggers shape as `MoveTo` minus the trajectory. `tool` names a specific tool INSTANCE id (config.yaml's `tool.instances: [{id,kind,x,y}]`, resolved to a kind here), and `InstallTool` additionally requires the robot be within `install_range` of that instance's own declared position. `DeployTool`/`RetractTool` lower/raise an already-installed tool (currently plow-only) between which `ploughed`-style effects would apply. Tracks the currently-equipped tool's kind ("free"/"cart"/"plow"), which specific instance id, and whether it's deployed, publishing all of it on latched `tool_state`/`tool_activity`/`tool_deployed` topics `move_to_node`/`battery_sim_node` both subscribe to (selecting `tool.equipped.<kind>.deployed_speed`/`.deployed_moving_drain_rate` instead of the regular value while deployed). |
+| `amiga_ros2_planners/tool_action_node.py` | new | Hosts `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` (actions) — fixed-Duration, no motion, same start/halt/triggers shape as `MoveTo` minus the trajectory. `tool` names a specific tool INSTANCE id (config.yaml's `tool.instances: [{id,kind,x,y}]`, resolved to a kind here), and `InstallTool` additionally requires the robot be within `install_range` of that instance's own declared position. `DeployTool`/`RetractTool` lower/raise an already-installed tool (currently plow-only) between which `ploughed`-style effects would apply. Tracks the currently-equipped tool's kind ("free"/"cart"/"plow"), which specific instance id, and whether it's deployed, publishing all of it on latched `tool_state`/`tool_activity`/`tool_deployed` topics `move_to_node`/`battery_sim_node` both subscribe to (selecting `tool.equipped.<kind>.deployed_speed`/`.deployed_moving_drain_rate` instead of the regular value while deployed). Also hosts `HitchedId`/`NearestToolOfKind` (`.srv`, INSTANTANEOUS query actions) against this SAME tracked state — no separate lookup mechanism. |
 | `amiga_interfaces/srv/PlanPath.srv`, `EvaluateCondition.srv`, `TakeSample.srv`, `action/MoveTo.action`, `InstallTool.action`, `UninstallTool.action`, `DeployTool.action`, `RetractTool.action` | new | Interfaces for the backends above. |
 | `schemas/amiga_btcpp_planners.xsd` | new (local copy) | `amiga_ros2_behavior_tree`'s own `amiga_btcpp.xsd`, extended with `PlanWith`/`MoveTo`/`TakeSample`/`InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool`/`Repeat`/every Condition except `HaltedWith` (deliberately excluded — see the file's own header), plus `Inverter` and a broadened `Fallback` (see "Running a problog_project BT" below for why). A **local copy**, not an edit to the submodule in place. |
 | `scripts/export_orchard_map.py` | new | Standalone (no ROS2 needed), extracts a real orchard from a checked-in mission fixture and writes a `map.pgm`/`map.yaml` pair — see "Saved orchard map instance" below. |
@@ -457,16 +457,25 @@ thread makes it safe here, rather than a genuinely async rewrite).
   copied alongside it) is unverified — same class of caveat as every
   other BT.cpp-runtime item on this list, since no ROS2/`behaviortree_
   ros2` build was available in this session.
-- **`problem5` needs several node types this repo has not ported yet**:
-  `Hitched` (condition, optional `kind` port), `HitchedId`/
-  `NearestToolOfKind` (actions, tool-lookup-by-state/-by-kind), and
-  `Deployed`/`PloughedAt`/`PloughedBetween` (conditions — the last two
-  need a NEW piece of runtime state this simulation doesn't track at
-  all yet: which grid cells a deployed plow has already ploughed,
-  discretized the same way `problog_project`'s own `ploughed/3`
-  fluent is). None of these are in `amiga_btcpp_planners.xsd`'s
-  `ActionGroup`/`ConditionGroup` yet, so `problem5`'s tree validates
-  structurally (root shape + `include`/`SubTree`, above) but would
-  still fail `bt_runner`'s own node-registration lookup if ticked as-is
-  — a distinct, sizable follow-up (a ploughing/tool-state feature), not
-  attempted here.
+- **`problem5`'s remaining node types are now implemented**: `Hitched`
+  (condition, optional `kind`), `Deployed` (condition, no ports),
+  `HitchedId`/`NearestToolOfKind` (INSTANTANEOUS query actions, new
+  `.srv`s hosted by `tool_action_node.py` alongside Install/Uninstall/
+  Deploy/RetractTool's own already-tracked `_equipped_tool`/
+  `_equipped_instance_id`/`_tool_instances` state — no second source of
+  truth), and `PloughedAt`/`PloughedBetween` (conditions, reading a NEW
+  `move_to_node.py`-published `ploughed_cells` topic: while a walk
+  starts with the plow both hitched AND deployed, `move_to_node`
+  samples the robot's own actual live position at the same cadence it
+  already polls triggers at, and marks each cell — discretized by
+  `plough_cell_size`, this problem's own `config.yaml` `ploughing.
+  cell_size` — as ploughed; `ploughing.py`'s `cell_index`/
+  `bresenham_cells` are byte-for-byte ports of `basic_action_theory.pl`'s
+  own `cell_index/3`/`bresenham_cells/5`, unit-tested standalone).
+  `amiga_btcpp_planners.xsd`'s `ActionGroup`/`ConditionGroup` and
+  `bt.cpp`'s own leaf registrations now cover all of them, so
+  `problem5`'s tree (and every subtree it `<include>`s) validates and
+  registers structurally end to end. **Still unverified**: no live
+  Gazebo/Nav2/`bt_runner` build was available in this session to
+  actually tick `problem5` and watch it plough a real swath — same
+  class of caveat as every other BT.cpp-runtime item on this list.
