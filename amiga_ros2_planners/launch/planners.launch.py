@@ -193,6 +193,26 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "tool_moving_drain_rate_plow_deployed_pct_s", default_value="0.1"),
         DeclareLaunchArgument(
+            "cmd_vel_topic", default_value="cmd_vel",
+            description="move_to_openloop_node's own direct velocity "
+            "publish target -- ignored entirely when move_to_backend "
+            "is \"nav2\"."),
+        DeclareLaunchArgument(
+            "max_angular_speed_rps", default_value="1.0",
+            description="move_to_openloop_node's own rotation-rate cap "
+            "-- see open_loop_trajectory.build_velocity_segments's own "
+            "docstring. Ignored when move_to_backend is \"nav2\"."),
+        DeclareLaunchArgument(
+            "move_to_backend", default_value="nav2",
+            description="\"nav2\" (default, move_to_node.py -- dials "
+            "Nav2's controller_server FollowPath, closed-loop against "
+            "the robot's real tf2 pose) or \"openloop\" "
+            "(move_to_openloop_node.py -- drives cmd_vel directly from "
+            "a purely dead-reckoned feedforward plan, no Nav2/tf2/"
+            "odometry involved at all; see that node's own module "
+            "docstring). Only ONE is ever launched -- both host the "
+            "SAME 'move_to' action name."),
+        DeclareLaunchArgument(
             "plough_cell_size", default_value="1.0",
             description="This problem's own config.yaml ploughing.cell_size "
             "(problog_problem.ploughing_params) -- MUST match between "
@@ -279,6 +299,8 @@ def generate_launch_description():
             name="move_to_node",
             namespace=namespace,
             output="screen",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("move_to_backend"), "' == 'nav2'"])),
             parameters=[{
                 "reference_frame": LaunchConfiguration("reference_frame"),
                 "odom_frame": LaunchConfiguration("odom_frame"),
@@ -290,6 +312,31 @@ def generate_launch_description():
                 "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
                 "controller_server_set_parameters_service": LaunchConfiguration(
                     "controller_server_set_parameters_service"),
+                "tool_speed_free_mps": LaunchConfiguration("tool_speed_free_mps"),
+                "tool_speed_cart_mps": LaunchConfiguration("tool_speed_cart_mps"),
+                "tool_speed_plow_mps": LaunchConfiguration("tool_speed_plow_mps"),
+                "tool_speed_cart_deployed_mps": LaunchConfiguration(
+                    "tool_speed_cart_deployed_mps"),
+                "tool_speed_plow_deployed_mps": LaunchConfiguration(
+                    "tool_speed_plow_deployed_mps"),
+                "ploughed_cells_topic": LaunchConfiguration("ploughed_cells_topic"),
+                "plough_cell_size": LaunchConfiguration("plough_cell_size"),
+            }],
+        ),
+        Node(
+            package="amiga_ros2_planners",
+            executable="move_to_openloop",
+            name="move_to_openloop_node",
+            namespace=namespace,
+            output="screen",
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("move_to_backend"), "' == 'openloop'"])),
+            parameters=[{
+                "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
+                "samples_per_segment": LaunchConfiguration("samples_per_segment"),
+                "max_angular_speed_rps": LaunchConfiguration("max_angular_speed_rps"),
+                "tool_state_topic": LaunchConfiguration("tool_state_topic"),
+                "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
                 "tool_speed_free_mps": LaunchConfiguration("tool_speed_free_mps"),
                 "tool_speed_cart_mps": LaunchConfiguration("tool_speed_cart_mps"),
                 "tool_speed_plow_mps": LaunchConfiguration("tool_speed_plow_mps"),

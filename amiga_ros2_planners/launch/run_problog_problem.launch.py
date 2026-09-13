@@ -79,6 +79,7 @@ def launch_setup(context, *args, **kwargs):
     mission_port = LaunchConfiguration("mission_port").perform(context)
     mission_send_timeout = LaunchConfiguration("mission_send_timeout").perform(context)
     headless = LaunchConfiguration("headless")
+    move_to_backend = LaunchConfiguration("move_to_backend")
 
     config = problog_problem.load_config(problem_dir)
     origin_x, origin_y, yaw_deg = problog_problem.compute_frame_origin(config)
@@ -147,6 +148,7 @@ def launch_setup(context, *args, **kwargs):
             "tool_instances": json.dumps(tool["tool_instances"]),
             "install_range": str(tool["install_range"]),
             "plough_cell_size": str(ploughing["cell_size"]),
+            "move_to_backend": move_to_backend,
             "expect_json": "false",
             "payload_length_included": "false",
         }.items(),
@@ -173,6 +175,11 @@ def generate_launch_description():
             "directory (containing behavior_tree.xml, config.yaml, "
             "obstacles_generated.pl) -- REQUIRED."),
         DeclareLaunchArgument("headless", default_value="false"),
+        DeclareLaunchArgument(
+            "move_to_backend", default_value="nav2",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- \"nav2\" (default) or \"openloop\" (see "
+            "move_to_openloop_node.py's own module docstring)."),
         DeclareLaunchArgument(
             "mission_port", default_value="12346",
             description="Must match bt.launch.py's own tcp_demux_node "

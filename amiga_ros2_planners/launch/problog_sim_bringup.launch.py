@@ -115,6 +115,9 @@ def generate_launch_description():
     tool_instances = LaunchConfiguration("tool_instances")
     install_range = LaunchConfiguration("install_range")
     plough_cell_size = LaunchConfiguration("plough_cell_size")
+    move_to_backend = LaunchConfiguration("move_to_backend")
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
+    max_angular_speed_rps = LaunchConfiguration("max_angular_speed_rps")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -196,6 +199,12 @@ def generate_launch_description():
             "PloughedAt/PloughedBetween to agree with move_to_node's own "
             "marking."),
         DeclareLaunchArgument(
+            "move_to_backend", default_value="nav2",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- \"nav2\" (default) or \"openloop\"."),
+        DeclareLaunchArgument("cmd_vel_topic", default_value="cmd_vel"),
+        DeclareLaunchArgument("max_angular_speed_rps", default_value="1.0"),
+        DeclareLaunchArgument(
             "expect_json", default_value="true",
             description="Forwarded to sim_bringup.launch.py -- set false "
             "for a mission with no second (orchard JSON) frame, e.g. a "
@@ -260,5 +269,8 @@ def generate_launch_description():
             tool_instances=tool_instances,
             install_range=install_range,
             plough_cell_size=plough_cell_size,
+            move_to_backend=move_to_backend,
+            cmd_vel_topic=cmd_vel_topic,
+            max_angular_speed_rps=max_angular_speed_rps,
         ),
     ])
