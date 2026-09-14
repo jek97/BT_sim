@@ -26,6 +26,8 @@ BT::PortsList PlanWith::providedPorts() {
       BT::InputPort<std::string>("goal", "", "target point, \"X;Y\""),
       BT::InputPort<std::string>("obstacle_id", "", "required for follow_boarder"),
       BT::InputPort<double>("offset", 0.0, "required for follow_boarder"),
+      BT::InputPort<double>("step", 2.0, "dastar ONLY: arc-length spacing (m) "
+                             "between discretized waypoints"),
       // Output ports: control_points is always wired via a shared
       // blackboard key ({cp}), never a literal, so storing the raw
       // std::vector<geometry_msgs::msg::Point> directly needs no string
@@ -63,6 +65,10 @@ bool PlanWith::setRequest(Request::SharedPtr &request) {
   double offset = 0.0;
   getInput("offset", offset);
   request->offset = offset;
+
+  double step = 2.0;
+  getInput("step", step);
+  request->step = step;
 
   // Throttled: this leaf sits inside a ReactiveSequence ahead of MoveTo
   // (see this class's own header), so it's re-run and re-logged on

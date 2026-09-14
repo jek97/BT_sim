@@ -115,6 +115,14 @@
     <xs:element name="Sequence" type="BTNodeType" />
     <xs:element name="ReactiveSequence" type="BTNodeType" />
     <xs:element name="Fallback" type="FallbackType" />
+    <!-- ReactiveFallback: BT.cpp's own built-in reactive Fallback —
+         standard core node type (auto-registered by
+         BT::BehaviorTreeFactory itself, same as Sequence/Fallback/
+         ReactiveSequence, needing no bt.cpp registration of our own),
+         previously just missing from this schema's own ControlFlowGroup.
+         Same child shape as Fallback above (see FallbackType's own
+         note). -->
+    <xs:element name="ReactiveFallback" type="FallbackType" />
     <xs:element name="RetryUntilSuccessful" type="RetryUntilSuccessfulType" />
     <xs:element name="Repeat" type="RepeatType" />
 
@@ -134,6 +142,7 @@
             <xs:element ref="Sequence" />
             <xs:element ref="ReactiveSequence" />
             <xs:element ref="Fallback" />
+            <xs:element ref="ReactiveFallback" />
             <xs:element ref="RetryUntilSuccessful" />
             <xs:element ref="Repeat" />
         </xs:choice>
@@ -154,6 +163,7 @@
             <xs:element name="SampleLeaf" type="sampleLeafType" />
             <!-- problog_project additions -->
             <xs:element name="PlanWith" type="planWithType" />
+            <xs:element name="PlanWithWaypoints" type="planWithWaypointsType" />
             <xs:element name="MoveTo" type="moveToType" />
             <xs:element name="TakeSample" type="takeSampleType" />
             <xs:element name="InstallTool" type="installToolType" />
@@ -413,6 +423,7 @@
             <xs:enumeration value="straight" />
             <xs:enumeration value="voronoi" />
             <xs:enumeration value="follow_boarder" />
+            <xs:enumeration value="dastar" />
         </xs:restriction>
     </xs:simpleType>
 
@@ -421,13 +432,49 @@
         <xs:attribute name="service_name" type="xs:string" use="optional"
             fixed="plan_path" />
         <xs:attribute name="algorithm" type="planAlgorithmType" use="required" />
-        <!-- required for astar/straight/voronoi, omitted for follow_boarder -->
+        <!-- required for astar/straight/voronoi/dastar, omitted for follow_boarder -->
         <xs:attribute name="goal" type="portValueType" use="optional" />
         <!-- required for follow_boarder, omitted otherwise -->
         <xs:attribute name="obstacle_id" type="xs:string" use="optional" />
         <xs:attribute name="offset" type="portValueType" use="optional" />
+        <!-- dastar ONLY: arc-length spacing (m) between discretized
+             waypoints along A*'s own raw path; defaults to 2.0 if
+             omitted (see planning_core.plan_dastar_points), must be
+             omitted for every other algorithm. -->
+        <xs:attribute name="step" type="portValueType" use="optional" default="2.0" />
         <!-- output ports, typically bound to a blackboard key a
              subsequent MoveTo/condition reads -->
+        <xs:attribute name="control_points" type="portValueType" use="optional" />
+        <xs:attribute name="reason" type="portValueType" use="optional" />
+        <xs:attribute name="status" type="portValueType" use="optional" />
+    </xs:complexType>
+
+    <!-- PlanWithWaypoints — the multi-waypoint generalization of
+         PlanWith's own astar/straight algorithms (see
+         module/contracts/schema.yaml's own PlanWithWaypoints entry,
+         problog_project submodule, for the full "why this exists").
+         service_name is fixed, naming amiga_ros2_planners'
+         plan_service_node's own SEPARATE PlanPathWaypoints service
+         (not PlanWith's own PlanPath). -->
+    <xs:simpleType name="planWaypointsAlgorithmType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="astar" />
+            <xs:enumeration value="straight" />
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="planWithWaypointsType">
+        <xs:attribute name="name" type="taskNameType" use="optional" />
+        <xs:attribute name="service_name" type="xs:string" use="optional"
+            fixed="plan_path_waypoints" />
+        <xs:attribute name="algorithm" type="planWaypointsAlgorithmType" use="required" />
+        <!-- "X;Y|X;Y|...": ordered points to visit in order, at
+             least one required. portValueType (not a stricter pattern)
+             since a literal here can ALSO be a "|"-joined string built
+             by the tree author from other blackboard values — this
+             schema has no way to validate that shape statically any
+             more than it validates a bare goal="{x}" reference. -->
+        <xs:attribute name="waypoints" type="portValueType" use="required" />
         <xs:attribute name="control_points" type="portValueType" use="optional" />
         <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />

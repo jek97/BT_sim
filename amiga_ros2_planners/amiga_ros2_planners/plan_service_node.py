@@ -5,9 +5,17 @@ plan_service_node.py
 Hosts PlanPath (amiga_interfaces/srv/PlanPath) -- the ROS2-service form
 of problog_project's PlanWith BT node (see that project's
 module/contracts/schema.yaml and bt_actions.py). One consolidated
-service covering all four algorithms, dispatched on the request's own
-`algorithm` field, exactly mirroring how problog_project collapsed them
-into one BT.cpp action rather than four.
+service covering all five algorithms (astar/straight/voronoi/
+follow_boarder/dastar), dispatched on the request's own `algorithm`
+field, exactly mirroring how problog_project collapsed them into one
+BT.cpp action rather than five.
+
+Also hosts PlanPathWaypoints (amiga_interfaces/srv/PlanPathWaypoints)
+-- the ROS2-service form of PlanWithWaypoints, the multi-waypoint
+generalization of astar/straight (see that .srv's own header, and
+planning_core.py's own plan_astar_waypoints_points/
+plan_straight_waypoints_points/plan_dastar_points for the actual
+computation each of these five-plus-two algorithms delegates to).
 
 The request deliberately carries NO start position: PlanWith's own
 contract is "plan from the CURRENT position" (schema.yaml's own words),
@@ -49,7 +57,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
 from nav_msgs.msg import OccupancyGrid
 
-from amiga_interfaces.srv import PlanPath
+from amiga_interfaces.srv import PlanPath, PlanPathWaypoints
 from amiga_ros2_planners import planning_core, problog_problem
 from amiga_ros2_planners.frame_transform import ProblogFrameTransform
 from amiga_ros2_planners.orchard_map import occupancy_grid_msg_to_grid
@@ -140,7 +148,10 @@ class PlanServiceNode(Node):
                 "plan_service_node: no pose after startup timeout, "
                 "advertising 'plan_path' anyway")
         self._srv = self.create_service(PlanPath, "plan_path", self._on_request)
-        self.get_logger().info("plan_service_node ready on 'plan_path'")
+        self._waypoints_srv = self.create_service(
+            PlanPathWaypoints, "plan_path_waypoints", self._on_waypoints_request)
+        self.get_logger().info(
+            "plan_service_node ready on 'plan_path'/'plan_path_waypoints'")
 
     def _on_map(self, msg):
         self._static_grid = occupancy_grid_msg_to_grid(msg)
@@ -181,6 +192,20 @@ class PlanServiceNode(Node):
                 control_points = planning_core.plan_astar_points(
                     sx, sy, goal_x, goal_y,
                     obstacles=self._obstacles.get_obstacles())
+        elif algorithm == "dastar":
+            if self._problog_mode:
+                control_points = planning_core.plan_dastar_points_polygons(
+                    sx, sy, goal_x, goal_y, request.step, self._problem_obstacle_polygons)
+            elif self._static_grid is not None:
+                control_points = planning_core.plan_dastar_points(
+                    sx, sy, goal_x, goal_y, request.step, grid=self._static_grid)
+            else:
+                self.get_logger().warn(
+                    "no orchard map received yet from orchard_map_node -- "
+                    "falling back to a query-scoped grid")
+                control_points = planning_core.plan_dastar_points(
+                    sx, sy, goal_x, goal_y, request.step,
+                    obstacles=self._obstacles.get_obstacles())
         elif algorithm == "straight":
             control_points = planning_core.straight_control_points(
                 sx, sy, goal_x, goal_y)
@@ -216,6 +241,61 @@ class PlanServiceNode(Node):
         if control_points is None:
             response.control_points = []
             response.reason = "no_obstacle" if algorithm == "follow_boarder" else "no_path"
+            response.status = False
+            return response
+
+        response.control_points = [Point(x=float(x), y=float(y), z=0.0)
+                                    for x, y in control_points]
+        response.reason = "completed"
+        response.status = True
+        return response
+
+
+    def _on_waypoints_request(self, request, response):
+        """PlanWithWaypoints's own backend -- see PlanPathWaypoints.srv's
+        own header. Same tf2-current-position/goal-frame-transform/
+        obstacle-source-dispatch shape as _on_request above, just for
+        the two multi-waypoint planners (astar/straight only)."""
+        xy = self._pose.get_xy()
+        if xy is None:
+            response.control_points = []
+            response.reason = "no_pose"
+            response.status = False
+            return response
+        sx, sy = xy
+
+        waypoints = [self._goal_transform.to_sim_frame(p.x, p.y) for p in request.waypoints]
+        if not waypoints:
+            response.control_points = []
+            response.reason = "no_waypoints"
+            response.status = False
+            return response
+
+        algorithm = request.algorithm
+        if algorithm == "astar":
+            if self._problog_mode:
+                control_points = planning_core.plan_astar_waypoints_points_polygons(
+                    sx, sy, waypoints, self._problem_obstacle_polygons)
+            elif self._static_grid is not None:
+                control_points = planning_core.plan_astar_waypoints_points(
+                    sx, sy, waypoints, grid=self._static_grid)
+            else:
+                self.get_logger().warn(
+                    "no orchard map received yet from orchard_map_node -- "
+                    "falling back to a query-scoped grid")
+                control_points = planning_core.plan_astar_waypoints_points(
+                    sx, sy, waypoints, obstacles=self._obstacles.get_obstacles())
+        elif algorithm == "straight":
+            control_points = planning_core.plan_straight_waypoints_points(sx, sy, waypoints)
+        else:
+            response.control_points = []
+            response.reason = f"unknown_algorithm({algorithm})"
+            response.status = False
+            return response
+
+        if control_points is None:
+            response.control_points = []
+            response.reason = "no_path"
             response.status = False
             return response
 

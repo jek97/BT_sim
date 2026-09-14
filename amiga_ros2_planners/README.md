@@ -61,7 +61,7 @@ can't make an unbuilt leaf tick.
 | `amiga_ros2_planners/obstacle_types.py` | new | The plain `Obstacle(id, x, y, radius)` shape, split out so the planning/geometry core has no ROS import. |
 | `amiga_ros2_planners/orchard_obstacles.py` | new | Subscribes to the same tree-info JSON topic `orchard_management_node` already caches; converts every tree into a circular `Obstacle`. Accepts both JSON shapes this repo's own fixtures carry (see its own docstring). |
 | `amiga_ros2_planners/pose.py` | new | tf2-based current-position lookup. This simulation's replacement for problog_project's `now/2 + at/4` situation fluent. |
-| `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm`. |
+| `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm` (`astar`/`straight`/`voronoi`/`follow_boarder`/`dastar`). Also hosts `PlanPathWaypoints.srv` — the ROS2-service form of `PlanWithWaypoints` (the multi-waypoint generalization of `astar`/`straight`), on a separate `plan_path_waypoints` service. |
 | `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`** (including `Hitched`/`Deployed`, read from `tool_action_node`'s own latched `tool_state`/`tool_deployed` topics, and `PloughedAt`/`PloughedBetween`, read from `move_to_node`'s own latched `ploughed_cells` topic), plus `CollisionDetected` (this simulation's own addition, no `schema.yaml` counterpart): reads whether `amiga_kinova/model.sdf`'s own `chassis_contact_<front\|back\|left\|right>` Gazebo contact sensors currently report contact — genuine physics collision between the robot's real collision shape and the environment's, not the tf2-vs-tracked-obstacle-list approximation every other condition here uses. |
 | `amiga_ros2_planners/battery_sim_node.py` | new | A simulated battery percentage (this simulation has no real one) so `Battery*` conditions have something to read. |
 | `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls a real subset of `triggers` against `condition_service_node` and cancels early if one fires. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. Selected by `move_to_backend:=nav2` (default) — see `move_to_openloop_node.py`'s row below for the alternative. |
@@ -395,6 +395,25 @@ thread makes it safe here, rather than a genuinely async rewrite).
   and "a `problog_project` tree verifiably runs end to end in Gazebo":
   a build, plus an actual tick of a real tree, hasn't happened.
 - **`move_to_node`'s `FollowPath` integration is untested** — see above.
+- **`PlanWith algorithm="dastar"`/`PlanWithWaypoints`, and the XSD's
+  new `ReactiveFallback` element, ported from `problog_project`'s own
+  `merged-moveto` branch** — `dastar` ("discretized A*": the same raw
+  A* grid path, resampled by arc length into straight-line-chained
+  waypoints instead of one smoothed spline — `planning_core.
+  plan_dastar_points`/`plan_dastar_points_polygons`) and
+  `PlanWithWaypoints` (multi-waypoint astar/straight, concatenating
+  each leg's own control points into one chain — `planning_core.
+  plan_astar_waypoints_points[_polygons]`/
+  `plan_straight_waypoints_points`, backed by a NEW `plan_path_waypoints`
+  service on `plan_service_node`) are unit-tested at the `planning_core.py`
+  level (including that dastar's own corners never cut through an
+  obstacle it routed around) but — like every other BT.cpp leaf in this
+  package — untested end to end against a built `bt_runner`. Verified
+  by bulk-validating every current (non-`old_problems`) `problog_project`
+  problem tree against the extended schema: all 15 pass, including the
+  `PlanWithWaypoints`/`ReactiveFallback` usage several of them actually
+  have (no current tree exercises `dastar` itself — it only appears in
+  those problems' own generated Prolog plans so far).
 - **`move_to_openloop_node` (the `move_to_backend:=openloop` alternative)
   is untested against a live `cmd_vel`/`diff_drive_controller`** —
   `open_loop_trajectory.py`'s own math (segment timing, unicycle

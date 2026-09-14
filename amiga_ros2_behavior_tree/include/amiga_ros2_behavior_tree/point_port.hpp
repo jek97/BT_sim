@@ -3,6 +3,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace amiga_bt {
 
@@ -38,6 +39,30 @@ inline std::string formatPoint(double x, double y) {
   std::ostringstream oss;
   oss << x << ';' << y;
   return oss.str();
+}
+
+// Parses a std::vector<Point> port's own "X;Y|X;Y|..." literal
+// encoding -- schema.yaml's own PlanWithWaypoints.waypoints port,
+// "|"-separated (each "X;Y" pair already uses ';', and this schema's
+// own std::vector<std::string> ports already use ',' for a different
+// port type -- see schema.yaml's own note). Returns false (leaving
+// `out` in an unspecified state) on ANY malformed "X;Y" segment or an
+// entirely empty `text`.
+inline bool parseWaypoints(const std::string &text, std::vector<std::pair<double, double>> &out) {
+  out.clear();
+  if (text.empty()) {
+    return false;
+  }
+  std::stringstream ss(text);
+  std::string segment;
+  while (std::getline(ss, segment, '|')) {
+    double x = 0.0, y = 0.0;
+    if (!parsePoint(segment, x, y)) {
+      return false;
+    }
+    out.emplace_back(x, y);
+  }
+  return !out.empty();
 }
 
 }  // namespace amiga_bt

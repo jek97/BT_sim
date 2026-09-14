@@ -16,14 +16,14 @@
 # orchard_management_node already caches (see amiga_ros2_planners'
 # README), and treats each tree as a circular obstacle.
 
-# One of: "astar", "straight", "voronoi", "follow_boarder" -- selects
-# which fields below are actually used, same convention as
+# One of: "astar", "straight", "voronoi", "follow_boarder", "dastar" --
+# selects which fields below are actually used, same convention as
 # problog_project's own PlanWith.algorithm port.
 string algorithm
 
 # Target position, world/map frame metres -- REQUIRED for astar/
-# straight/voronoi, IGNORED for follow_boarder (which has no goal of
-# its own; see follow_boarder's note in planning_core.py).
+# straight/voronoi/dastar, IGNORED for follow_boarder (which has no
+# goal of its own; see follow_boarder's note in planning_core.py).
 float64 goal_x
 float64 goal_y
 
@@ -36,6 +36,13 @@ string obstacle_id
 # circling it, metres -- REQUIRED for follow_boarder, IGNORED
 # otherwise.
 float64 offset
+
+# dastar ONLY, IGNORED otherwise: arc-length spacing (metres) between
+# discretized waypoints along A*'s own raw grid path -- see
+# planning_core.plan_dastar_points's own docstring. The BT.cpp PlanWith
+# leaf's own `step` port defaults this to 2.0 when omitted, matching
+# schema.yaml's own PlanWith.step default.
+float64 step
 
 ---
 # Response

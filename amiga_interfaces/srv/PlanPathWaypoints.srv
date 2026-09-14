@@ -1,0 +1,51 @@
+# PlanPathWaypoints.srv
+#
+# The ROS2-service form of problog_project's PlanWithWaypoints BT node
+# (see module/contracts/schema.yaml's own entry) -- the MULTI-WAYPOINT
+# generalization of PlanPath.srv's own astar/straight algorithms:
+# plans a route from the robot's CURRENT position (read from tf2 by
+# the server, same as PlanPath.srv) THROUGH every point in `waypoints`
+# IN ORDER, concatenating each leg's own chained-Bezier control points
+# into ONE combined chain (planning_core.py's own
+# plan_astar_waypoints_points/plan_straight_waypoints_points).
+#
+# A SEPARATE service from PlanPath.srv, not one more field on it: this
+# node's own request shape (a variable-length point LIST instead of one
+# goal_x/goal_y pair) is genuinely different, not just one more
+# algorithm value sharing the same fields -- see schema.yaml's own
+# PlanWithWaypoints entry for the full "why this exists" (shrinking a
+# many-leg tree's own compiled ProbLog formula by drawing ONE position-
+# noise pair for the whole merged route instead of one per original
+# leg) and its own genuine probabilistic-model tradeoff.
+#
+# Server: amiga_ros2_planners' plan_service_node (same node, same
+# obstacle-source state PlanPath.srv's own server already reads --
+# see that node's own module docstring).
+
+# One of: "astar", "straight" -- ONLY these two (voronoi has no
+# natural per-leg chaining and follow_boarder has no goal point at all
+# -- see schema.yaml's own PlanWithWaypoints entry).
+string algorithm
+
+# Ordered list of points to visit IN ORDER, world/map frame metres --
+# e.g. [(5,27), (41,27), (0,0)] plans (current position) -> (5,27) ->
+# (41,27) -> (0,0). At least one point is required; a single-point
+# list is equivalent to plain PlanPath's own astar/straight behavior
+# (one leg, nothing to chain).
+geometry_msgs/Point[] waypoints
+
+---
+# Response
+
+# The FULL merged path, chained cubic Bezier control points (length
+# 3k+1), in the SAME frame the server read the robot's current pose
+# in -- empty if status is false.
+geometry_msgs/Point[] control_points
+
+# "completed", "no_path" (waypoints is non-empty but some leg has no
+# route), "no_waypoints" (waypoints was empty), or "no_pose" (the
+# server couldn't resolve the robot's own current position via tf2).
+string reason
+
+# true iff reason is "completed".
+bool status

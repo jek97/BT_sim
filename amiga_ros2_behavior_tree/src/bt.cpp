@@ -23,6 +23,7 @@
 #include "amiga_ros2_behavior_tree/actions/follow_person.hpp"
 #include "amiga_ros2_behavior_tree/actions/arm_move_to.hpp"
 #include "amiga_ros2_behavior_tree/actions/plan_with.hpp"
+#include "amiga_ros2_behavior_tree/actions/plan_with_waypoints.hpp"
 #include "amiga_ros2_behavior_tree/actions/move_to.hpp"
 #include "amiga_ros2_behavior_tree/actions/evaluate_conditions.hpp"
 #include "amiga_ros2_behavior_tree/actions/take_sample.hpp"
@@ -127,6 +128,11 @@ int main(int argc, char **argv) {
   plan_params.default_port_value = "plan_path";
   plan_params.wait_for_server_timeout = backend_timeout;
   plan_params.server_timeout = backend_timeout;
+
+  RosNodeParams plan_waypoints_params = ros_params;
+  plan_waypoints_params.default_port_value = "plan_path_waypoints";
+  plan_waypoints_params.wait_for_server_timeout = backend_timeout;
+  plan_waypoints_params.server_timeout = backend_timeout;
   // move_to_node.py's own "move_to" ActionServer, unlike plan_path/
   // evaluate_condition, is advertised immediately at startup (its own
   // pose wait happens later, per-goal, inside _execute() -- see that
@@ -195,6 +201,7 @@ int main(int argc, char **argv) {
   retract_tool_params.server_timeout = tool_action_timeout;
 
   factory.registerNodeType<PlanWith>("PlanWith", plan_params);
+  factory.registerNodeType<PlanWithWaypoints>("PlanWithWaypoints", plan_waypoints_params);
   factory.registerNodeType<MoveTo>("MoveTo", move_to_params);
   factory.registerNodeType<DistanceBelow>("DistanceBelow", condition_params);
   factory.registerNodeType<DistanceEqual>("DistanceEqual", condition_params);

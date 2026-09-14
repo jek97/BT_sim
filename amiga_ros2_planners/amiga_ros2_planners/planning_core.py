@@ -345,26 +345,52 @@ def build_polygon_grid(obstacle_polygons, sx, sy, gx, gy,
     return grid
 
 
-def plan_astar_points_polygons(sx, sy, gx, gy, obstacle_polygons):
+def plan_astar_points_polygons(sx, sy, gx, gy, obstacle_polygons, grid=None):
     """plan_astar_points's own polygon-obstacle counterpart -- see
     build_polygon_grid's own docstring for why this needs a separate
-    rasterizer rather than reusing plan_astar_points(obstacles=...)."""
+    rasterizer rather than reusing plan_astar_points(obstacles=...).
+    Pass a pre-built `grid` (e.g. plan_astar_waypoints_points_polygons'
+    own ONE grid spanning a whole multi-leg route) to plan against it
+    directly instead of rasterizing a fresh one scoped to just this
+    (sx,sy,gx,gy) leg."""
     sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
-    grid = build_polygon_grid(obstacle_polygons, sx, sy, gx, gy)
+    if grid is None:
+        grid = build_polygon_grid(obstacle_polygons, sx, sy, gx, gy)
+
+    path_xy = _astar_raw_path_xy(grid, sx, sy, gx, gy)
+    if path_xy is None:
+        return None
+    if len(path_xy) == 1:
+        return [(sx, sy)] * 4
+    return _fit_or_straight(path_xy, sx, sy, gx, gy)
+
+
+def _astar_raw_path_xy(grid, sx, sy, gx, gy):
+    """[(x,y), ...] of A*'s own raw grid-cell path (BEFORE any spline
+    fit or straight-line resampling), shared by plan_astar_points/
+    plan_astar_points_polygons (which spline-fit it) and
+    plan_dastar_points/plan_dastar_points_polygons (which resample it
+    by arc length instead -- problog_project's own planners.py "DASTAR"
+    section, ported byte-for-byte in spirit here). Returns None if
+    start/goal fall outside `grid`'s own bounds or no path connects
+    them. start_rc==goal_rc (same grid cell -- "already there", the
+    SAME convention every planner in this module already uses) returns
+    [(sx,sy)] (length 1, the literal start point) rather than running
+    A* at all; every caller special-cases a length-1 result into its
+    own "degenerate but valid" output (a 4-identical-point Bezier for
+    the spline-fit callers; _resample_path_every_step/
+    _chain_multi_leg_control_points already accept a length-1 leg
+    input directly for the dastar/waypoints callers)."""
     start_rc = grid.world_to_grid(sx, sy)
     goal_rc = grid.world_to_grid(gx, gy)
-
     if not grid.in_bounds(*start_rc) or not grid.in_bounds(*goal_rc):
         return None
     if start_rc == goal_rc:
-        return [(sx, sy)] * 4
-
+        return [(sx, sy)]
     path_rc = astar(grid, start_rc, goal_rc)
     if path_rc is None:
         return None
-
-    path_xy = [grid.grid_to_world(r, c) for r, c in path_rc]
-    return _fit_or_straight(path_xy, sx, sy, gx, gy)
+    return [grid.grid_to_world(r, c) for r, c in path_rc]
 
 
 def astar(grid_map, start_rc, goal_rc, occ_thresh=OCC_THRESH,
@@ -443,21 +469,166 @@ def plan_astar_points(sx, sy, gx, gy, obstacles=None, grid=None):
     if grid is None:
         grid = build_occupancy_grid(obstacles or [], sx, sy, gx, gy)
 
-    start_rc = grid.world_to_grid(sx, sy)
-    goal_rc = grid.world_to_grid(gx, gy)
-
-    if not grid.in_bounds(*start_rc) or not grid.in_bounds(*goal_rc):
+    path_xy = _astar_raw_path_xy(grid, sx, sy, gx, gy)
+    if path_xy is None:
         return None
-
-    if start_rc == goal_rc:
+    if len(path_xy) == 1:
         return [(sx, sy)] * 4
-
-    path_rc = astar(grid, start_rc, goal_rc)
-    if path_rc is None:
-        return None
-
-    path_xy = [grid.grid_to_world(r, c) for r, c in path_rc]
     return _fit_or_straight(path_xy, sx, sy, gx, gy)
+
+
+# =====================================================================
+# DASTAR -- "discretized A*": plans the SAME raw A* grid path
+# _astar_raw_path_xy itself searches, but instead of fitting one smooth
+# curve through every raw grid cell, first DISCRETIZES that raw path --
+# one waypoint every `step` metres of ARC LENGTH walked along it
+# (_resample_path_every_step below) -- then reuses the multi-waypoint
+# STRAIGHT-LINE chaining below to connect those waypoints. Byte-for-
+# byte port of problog_project's own planners.py "DASTAR" section.
+# =====================================================================
+def _resample_path_every_step(path_xy, step_m):
+    """Resample a polyline path_xy=[(x,y), ...] BY ARC LENGTH, taking
+    one point every step_m metres walked along it, plus ALWAYS the
+    final point (the goal) even if it doesn't land on an exact
+    multiple of step_m -- same "reaches the last one" contract as the
+    multi-waypoint planners below. Returns waypoints EXCLUDING
+    path_xy[0] (the start point) -- i.e. directly usable as the
+    `waypoints` argument of _chain_multi_leg_control_points below.
+    path_xy must have at least 2 points; a degenerate (zero-length)
+    path returns just its own last point. Unchanged from
+    problog_project's own function of the same name."""
+    cumulative = [0.0]
+    for (ax, ay), (bx, by) in zip(path_xy[:-1], path_xy[1:]):
+        cumulative.append(cumulative[-1] + math.hypot(bx - ax, by - ay))
+    total = cumulative[-1]
+    if total <= 1.0e-9:
+        return [path_xy[-1]]
+
+    def point_at(dist):
+        for i in range(1, len(cumulative)):
+            if cumulative[i] >= dist - 1.0e-9:
+                seg_len = cumulative[i] - cumulative[i - 1]
+                if seg_len <= 1.0e-12:
+                    return path_xy[i]
+                frac = (dist - cumulative[i - 1]) / seg_len
+                ax, ay = path_xy[i - 1]
+                bx, by = path_xy[i]
+                return (ax + (bx - ax) * frac, ay + (by - ay) * frac)
+        return path_xy[-1]
+
+    waypoints = []
+    dist = step_m
+    while dist < total:
+        waypoints.append(point_at(dist))
+        dist += step_m
+    waypoints.append(path_xy[-1])
+    return waypoints
+
+
+def plan_dastar_points(sx, sy, gx, gy, step=2.0, obstacles=None, grid=None):
+    """Plain-Python dastar planner, orchard/grid-obstacle mode -- see
+    this section's own header. Returns None under exactly the same
+    conditions plan_astar_points itself would."""
+    sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
+    if grid is None:
+        grid = build_occupancy_grid(obstacles or [], sx, sy, gx, gy)
+    path_xy = _astar_raw_path_xy(grid, sx, sy, gx, gy)
+    if path_xy is None:
+        return None
+    if len(path_xy) == 1:
+        return [(sx, sy)] * 4
+    waypoints = _resample_path_every_step(path_xy, float(step))
+    return _chain_multi_leg_control_points(sx, sy, waypoints, straight_control_points)
+
+
+def plan_dastar_points_polygons(sx, sy, gx, gy, step, obstacle_polygons, grid=None):
+    """plan_dastar_points's own polygon-obstacle counterpart -- see
+    plan_astar_points_polygons's own docstring for why polygon mode
+    needs its own rasterizer."""
+    sx, sy, gx, gy = float(sx), float(sy), float(gx), float(gy)
+    if grid is None:
+        grid = build_polygon_grid(obstacle_polygons, sx, sy, gx, gy)
+    path_xy = _astar_raw_path_xy(grid, sx, sy, gx, gy)
+    if path_xy is None:
+        return None
+    if len(path_xy) == 1:
+        return [(sx, sy)] * 4
+    waypoints = _resample_path_every_step(path_xy, float(step))
+    return _chain_multi_leg_control_points(sx, sy, waypoints, straight_control_points)
+
+
+# =====================================================================
+# MULTI-WAYPOINT MERGING (PlanWithWaypoints) -- astar/straight ONLY
+# (voronoi has no natural per-leg chaining and follow_boarder has no
+# goal point at all -- see schema.yaml's own PlanWithWaypoints entry).
+# Plans (sx,sy) -> waypoints[0] -> waypoints[1] -> ... -> waypoints[-1]
+# as N independent per-leg calls to the SAME single-goal planners
+# already above, then CONCATENATES each leg's own chained-Bezier
+# control_points into ONE combined chain -- byte-for-byte port of
+# problog_project's own planners.py "MULTI-WAYPOINT MERGING" section.
+# =====================================================================
+def _chain_multi_leg_control_points(sx, sy, waypoints, leg_planner):
+    """Shared core -- leg_planner is any (ax,ay,bx,by)->control_points|
+    None single-goal planner (e.g. straight_control_points, or a
+    closure over plan_astar_points/plan_astar_points_polygons pinned to
+    one shared grid). waypoints is [(x,y), ...], at least one point.
+    Returns the combined chain, or None if ANY leg fails."""
+    points = [(float(sx), float(sy))] + [(float(x), float(y)) for x, y in waypoints]
+    combined = None
+    for (ax, ay), (bx, by) in zip(points, points[1:]):
+        leg_cp = leg_planner(ax, ay, bx, by)
+        if leg_cp is None:
+            return None
+        if combined is None:
+            combined = list(leg_cp)
+        else:
+            combined.extend(leg_cp[1:])
+    return combined
+
+
+def plan_astar_waypoints_points(sx, sy, waypoints, obstacles=None, grid=None):
+    """Plain-Python multi-waypoint A* planner, orchard/grid-obstacle
+    mode. Builds ONE grid spanning the whole route (start + every
+    waypoint) up front, shared across every leg -- rather than each
+    leg rasterizing its own, potentially inconsistent, narrower grid.
+    Returns None if waypoints is empty or if ANY leg has no path."""
+    if not waypoints:
+        return None
+    sx, sy = float(sx), float(sy)
+    waypoints = [(float(x), float(y)) for x, y in waypoints]
+    if grid is None:
+        route = [(sx, sy)] + waypoints
+        xs, ys = [p[0] for p in route], [p[1] for p in route]
+        grid = build_occupancy_grid(obstacles or [], min(xs), min(ys), max(xs), max(ys))
+    return _chain_multi_leg_control_points(
+        sx, sy, waypoints,
+        lambda ax, ay, bx, by: plan_astar_points(ax, ay, bx, by, grid=grid))
+
+
+def plan_astar_waypoints_points_polygons(sx, sy, waypoints, obstacle_polygons):
+    """plan_astar_waypoints_points's own polygon-obstacle counterpart."""
+    if not waypoints:
+        return None
+    sx, sy = float(sx), float(sy)
+    waypoints = [(float(x), float(y)) for x, y in waypoints]
+    route = [(sx, sy)] + waypoints
+    xs, ys = [p[0] for p in route], [p[1] for p in route]
+    grid = build_polygon_grid(obstacle_polygons, min(xs), min(ys), max(xs), max(ys))
+    return _chain_multi_leg_control_points(
+        sx, sy, waypoints,
+        lambda ax, ay, bx, by: plan_astar_points_polygons(
+            ax, ay, bx, by, obstacle_polygons, grid=grid))
+
+
+def plan_straight_waypoints_points(sx, sy, waypoints):
+    """Plain-Python multi-waypoint straight-line planner -- obstacle-
+    agnostic (a straight leg never fails), same as plain
+    straight_control_points, so this ONE function serves both orchard
+    and problog_problem obstacle sources. Returns None only if
+    waypoints is empty."""
+    if not waypoints:
+        return None
+    return _chain_multi_leg_control_points(sx, sy, waypoints, straight_control_points)
 
 
 # =====================================================================

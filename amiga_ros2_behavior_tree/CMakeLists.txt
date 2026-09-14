@@ -48,6 +48,7 @@ add_executable(bt_runner
   src/actions/orient_robot_heading.cpp
   src/actions/arm_move_to.cpp
   src/actions/plan_with.cpp
+  src/actions/plan_with_waypoints.cpp
   src/actions/move_to.cpp
   src/actions/evaluate_condition_base.cpp
   src/actions/evaluate_conditions.cpp

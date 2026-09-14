@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/InterpretNote.srv
   srv/VerifyReplan.srv
   srv/PlanPath.srv
+  srv/PlanPathWaypoints.srv
   srv/EvaluateCondition.srv
   srv/TakeSample.srv
   srv/HitchedId.srv
