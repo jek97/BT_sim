@@ -17,15 +17,27 @@ same "loaded once at startup, not per-call" convention every other
 problog_problem-derived param in this package already uses.
 
 VALUE DRAW (schema.yaml's tool-instance-id-refactor-era addition): on a
-SUCCESSFUL sample, a second, independent draw produces a VALUE, 0-10 --
-a discretized Normal(mean,sigma) (config.yaml's sample.value.mean/
-sigma, defaulting to 5.0/2.0), same distribution
-config_to_prolog.py's own _discretized_normal_block computes exactly
-(that function bins a continuous Normal(mean,sigma) into integers 0-10
-via the real normal CDF, with the two boundary bins absorbing their own
-outer tail; round(gauss(mean,sigma)) clipped to [0,10] is the identical
-distribution -- clipping IS the boundary-bin absorption, just done by
-draw-then-clip instead of by pre-computing 11 weights).
+SUCCESSFUL sample, a second, independent draw produces a VALUE, shaped
+ONE OF TWO WAYS by this problem's own config.yaml (problog_problem.
+sample_params, threaded in as this node's own value_discretized/
+value_mean/value_sigma params):
+
+  - value_discretized (config.yaml's sample.value.discretized: a list
+    of {value, weight} outcomes): a weighted-random pick among exactly
+    those values (random.choices, which -- unlike config_to_prolog.py's
+    own _explicit_discrete_block -- normalizes the weights itself, so
+    they need not sum to exactly 1.0 here). Takes priority if
+    non-empty.
+  - value_mean/value_sigma (config.yaml's sample.value.mean/sigma,
+    defaulting to 5.0/2.0) -- a discretized Normal(mean,sigma) over the
+    integers 0-10, used whenever value_discretized is empty. Same
+    distribution config_to_prolog.py's own _discretized_normal_block
+    computes exactly (that function bins a continuous Normal(mean,sigma)
+    into integers 0-10 via the real normal CDF, with the two boundary
+    bins absorbing their own outer tail; round(gauss(mean,sigma))
+    clipped to [0,10] is the identical distribution -- clipping IS the
+    boundary-bin absorption, just done by draw-then-clip instead of by
+    pre-computing 11 weights). The ORIGINAL, still-default shape.
 
 Every id's own drawn value is kept in memory AND republished in full on
 a latched (TRANSIENT_LOCAL) `sample_values` topic (a JSON object,
@@ -58,7 +70,15 @@ class SampleServiceNode(Node):
         self.declare_parameter("success_probability", 0.5)
         self.declare_parameter("value_mean", 5.0)
         self.declare_parameter("value_sigma", 2.0)
+        # JSON-encoded [{"value": v, "weight": w}, ...] -- config.yaml's
+        # sample.value.discretized (problog_problem.sample_params),
+        # same "variable-length list can't be a plain launch arg"
+        # reasoning tool_instances already uses. "[]" (the default)
+        # means "not configured" -- falls back to value_mean/value_sigma.
+        self.declare_parameter("value_discretized", "[]")
         self.declare_parameter("sample_values_topic", "sample_values")
+
+        self._value_discretized = json.loads(self.get_parameter("value_discretized").value)
 
         # In-memory only -- this node's own lifetime IS the mission's
         # lifetime, same assumption tool_action_node.py's own
@@ -79,6 +99,18 @@ class SampleServiceNode(Node):
     def _publish_sample_values(self):
         self._sample_values_pub.publish(String(data=json.dumps(self._sample_values)))
 
+    def _draw_value(self):
+        """See this module's own docstring for the two ways
+        value_discretized/value_mean/value_sigma can shape this draw."""
+        if self._value_discretized:
+            values = [entry["value"] for entry in self._value_discretized]
+            weights = [entry["weight"] for entry in self._value_discretized]
+            return float(random.choices(values, weights=weights, k=1)[0])
+        mean = self.get_parameter("value_mean").value
+        sigma = self.get_parameter("value_sigma").value
+        value = int(round(random.gauss(mean, sigma)))
+        return float(max(0, min(10, value)))
+
     def _on_request(self, request, response):
         success_probability = self.get_parameter("success_probability").value
         success = random.random() < success_probability
@@ -86,17 +118,14 @@ class SampleServiceNode(Node):
         response.status = success
 
         if success:
-            mean = self.get_parameter("value_mean").value
-            sigma = self.get_parameter("value_sigma").value
-            value = int(round(random.gauss(mean, sigma)))
-            value = max(0, min(10, value))
+            value = self._draw_value()
             response.value = value
             self._sample_values[request.id] = value
             self._publish_sample_values()
             self.get_logger().info(
                 f"TakeSample: id='{request.id}' succeeded, value={value}")
         else:
-            response.value = 0
+            response.value = 0.0
             self.get_logger().info(f"TakeSample: id='{request.id}' failed")
 
         return response

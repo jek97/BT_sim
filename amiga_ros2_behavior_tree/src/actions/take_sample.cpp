@@ -24,7 +24,12 @@ BT::PortsList TakeSample::providedPorts() {
           "SampleValueBelow/Equal/Over references this same id."),
       BT::OutputPort<std::string>("reason"),
       BT::OutputPort<bool>("status"),
-      BT::OutputPort<int>("value", "The drawn value, 0-10 -- only meaningful on success."),
+      BT::OutputPort<double>(
+          "value", "The drawn value -- only meaningful on success. Whole "
+          "number in [0,10] under this problem's own default mean/sigma "
+          "draw, but an arbitrary (possibly non-integer, possibly "
+          "out-of-range) number if its own config.yaml uses sample.value."
+          "discretized instead -- see TakeSample.srv's own header."),
   };
 }
 
@@ -59,7 +64,7 @@ BT::NodeStatus TakeSample::tick() {
   Response::SharedPtr response = future.get();
   setOutput("reason", response->reason);
   setOutput("status", response->status);
-  setOutput("value", static_cast<int>(response->value));
+  setOutput("value", response->value);
   RCLCPP_INFO(logger(), "TakeSample: %s (id=%s)", response->reason.c_str(), id.c_str());
   return response->status ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
 }

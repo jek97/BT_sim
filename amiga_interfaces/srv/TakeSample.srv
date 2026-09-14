@@ -30,12 +30,23 @@ string reason
 # true iff reason is "sample_success".
 bool status
 
-# The drawn value, 0-10 -- a discretized Normal(mean,sigma) draw (this
-# problem's own config.yaml, sample.value.mean/sigma), taken ONLY on
-# success (matches schema.yaml's own sample_success(X,Y,V,SampleId,
-# ActionCode) -- V is absent from sample_failure entirely). Meaningless
-# when status is false; sample_service_node.py always sets it to 0 in
-# that case rather than leaving it at ROS's own implicit int32 default,
-# so this is a documented "don't read it" rather than an
-# indistinguishable one.
-int32 value
+# The drawn value, taken ONLY on success (matches schema.yaml's own
+# sample_success(X,Y,V,SampleId,ActionCode) -- V is absent from
+# sample_failure entirely), shaped ONE OF TWO WAYS by this problem's
+# own config.yaml (sample_service_node's own value_discretized/
+# value_mean/value_sigma params -- see problog_problem.sample_params):
+#   - sample.value.discretized: an EXPLICIT {value,weight} outcome
+#     list -- a weighted-random pick among exactly those values, which
+#     need be neither integers nor within any particular range. Takes
+#     priority if configured.
+#   - sample.value.mean/sigma (default 5.0/2.0) -- the ORIGINAL
+#     discretized Normal(mean,sigma) draw over the integers 0-10, used
+#     whenever sample.value.discretized is absent.
+# float64, not int32, so a discretized list's own arbitrary (non-
+# integer, or out-of-0-10-range) values round-trip exactly -- the
+# mean/sigma draw still always produces a whole number in [0,10] in
+# that float64. Meaningless when status is false; sample_service_node.py
+# always sets it to 0.0 in that case rather than leaving it at ROS's
+# own implicit float64 default, so this is a documented "don't read
+# it" rather than an indistinguishable one.
+float64 value

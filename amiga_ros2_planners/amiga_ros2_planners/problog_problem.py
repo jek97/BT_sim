@@ -177,19 +177,23 @@ _DEFAULT_TOOL_SUCCESS_PROBABILITY = 0.9
 
 
 def sample_params(config):
-    """{success_probability, value_mean, value_sigma} for
-    sample_service_node's own TakeSample backend, from config.yaml's
-    own sample.success_probability/sample.value.mean/sample.value.sigma
-    -- same 1:1 mapping and defaults (0.5/5.0/2.0) as
-    module/translators/config_to_prolog.py's own render_prolog/
-    _discretized_normal_block (the ProbLog-facing counterpart of these
-    same knobs)."""
+    """{success_probability, value_mean, value_sigma, value_discretized}
+    for sample_service_node's own TakeSample backend, from config.yaml's
+    own sample.success_probability/sample.value.mean/sample.value.sigma/
+    sample.value.discretized -- same 1:1 mapping and defaults
+    (0.5/5.0/2.0/[]) as module/translators/config_to_prolog.py's own
+    render_prolog/_discretized_normal_block/_explicit_discrete_block
+    (the ProbLog-facing counterpart of these same knobs -- see that
+    file's own note on how the two value-shapes are prioritized:
+    value_discretized, if non-empty, wins over value_mean/value_sigma,
+    exactly like sample_service_node.py's own _draw_value)."""
     sample_cfg = config.get("sample", {})
     value_cfg = sample_cfg.get("value", {})
     return {
         "success_probability": float(sample_cfg.get("success_probability", 0.5)),
         "value_mean": float(value_cfg.get("mean", 5.0)),
         "value_sigma": float(value_cfg.get("sigma", 2.0)),
+        "value_discretized": value_cfg.get("discretized", []),
     }
 
 

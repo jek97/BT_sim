@@ -94,6 +94,12 @@ def generate_launch_description():
             "(config.yaml sample.value.mean/.sigma), on success only."),
         DeclareLaunchArgument("sample_value_sigma", default_value="2.0"),
         DeclareLaunchArgument(
+            "sample_value_discretized", default_value="[]",
+            description="JSON-encoded [{'value':v,'weight':w}, ...] -- "
+            "config.yaml's own sample.value.discretized "
+            "(problog_problem.sample_params). Takes priority over "
+            "sample_value_mean/sample_value_sigma when non-empty."),
+        DeclareLaunchArgument(
             "tool_state_topic", default_value="tool_state",
             description="Latched (TRANSIENT_LOCAL) topic tool_action_node "
             "publishes its own tracked equipped-tool KIND on -- "
@@ -393,6 +399,7 @@ def generate_launch_description():
                 "success_probability": LaunchConfiguration("sample_success_probability"),
                 "value_mean": LaunchConfiguration("sample_value_mean"),
                 "value_sigma": LaunchConfiguration("sample_value_sigma"),
+                "value_discretized": LaunchConfiguration("sample_value_discretized"),
             }],
         ),
         Node(

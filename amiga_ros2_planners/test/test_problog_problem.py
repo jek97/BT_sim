@@ -81,12 +81,33 @@ def test_battery_params_defaults_when_missing():
 
 def test_sample_params_from_config():
     assert pp.sample_params({"sample": {"success_probability": 0.75}}) == {
-        "success_probability": 0.75, "value_mean": 5.0, "value_sigma": 2.0}
+        "success_probability": 0.75, "value_mean": 5.0, "value_sigma": 2.0,
+        "value_discretized": []}
 
 
 def test_sample_params_defaults_when_missing():
     assert pp.sample_params({}) == {
-        "success_probability": 0.5, "value_mean": 5.0, "value_sigma": 2.0}
+        "success_probability": 0.5, "value_mean": 5.0, "value_sigma": 2.0,
+        "value_discretized": []}
+
+
+def test_sample_params_discretized_takes_priority():
+    config = {
+        "sample": {
+            "value": {
+                "discretized": [{"value": 2, "weight": 0.2}, {"value": 8, "weight": 0.8}],
+                "mean": 1.0, "sigma": 1.0,
+            },
+        },
+    }
+    params = pp.sample_params(config)
+    assert params["value_discretized"] == [
+        {"value": 2, "weight": 0.2}, {"value": 8, "weight": 0.8}]
+    # mean/sigma are still parsed/threaded even when discretized is
+    # present -- sample_service_node.py's own runtime priority (not
+    # this function) is what makes discretized win.
+    assert params["value_mean"] == 1.0
+    assert params["value_sigma"] == 1.0
 
 
 def test_ploughing_params_from_config():

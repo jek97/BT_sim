@@ -85,6 +85,7 @@ def generate_launch_description():
     sample_success_probability = LaunchConfiguration("sample_success_probability")
     sample_value_mean = LaunchConfiguration("sample_value_mean")
     sample_value_sigma = LaunchConfiguration("sample_value_sigma")
+    sample_value_discretized = LaunchConfiguration("sample_value_discretized")
     install_duration_cart_s = LaunchConfiguration("install_duration_cart_s")
     install_duration_plow_s = LaunchConfiguration("install_duration_plow_s")
     uninstall_duration_cart_s = LaunchConfiguration("uninstall_duration_cart_s")
@@ -162,6 +163,7 @@ def generate_launch_description():
             "the same name -- TakeSample's coin-flip probability."),
         DeclareLaunchArgument("sample_value_mean", default_value="5.0"),
         DeclareLaunchArgument("sample_value_sigma", default_value="2.0"),
+        DeclareLaunchArgument("sample_value_discretized", default_value="[]"),
         DeclareLaunchArgument("install_duration_cart_s", default_value="10.0"),
         DeclareLaunchArgument("install_duration_plow_s", default_value="10.0"),
         DeclareLaunchArgument("uninstall_duration_cart_s", default_value="10.0"),
@@ -239,6 +241,7 @@ def generate_launch_description():
             sample_success_probability=sample_success_probability,
             sample_value_mean=sample_value_mean,
             sample_value_sigma=sample_value_sigma,
+            sample_value_discretized=sample_value_discretized,
             install_duration_cart_s=install_duration_cart_s,
             install_duration_plow_s=install_duration_plow_s,
             uninstall_duration_cart_s=uninstall_duration_cart_s,

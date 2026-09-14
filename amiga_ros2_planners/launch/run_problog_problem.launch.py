@@ -118,6 +118,7 @@ def launch_setup(context, *args, **kwargs):
             "sample_success_probability": str(sample["success_probability"]),
             "sample_value_mean": str(sample["value_mean"]),
             "sample_value_sigma": str(sample["value_sigma"]),
+            "sample_value_discretized": json.dumps(sample["value_discretized"]),
             "install_duration_cart_s": str(tool["install_duration_s"]["cart"]),
             "install_duration_plow_s": str(tool["install_duration_s"]["plow"]),
             "uninstall_duration_cart_s": str(tool["uninstall_duration_s"]["cart"]),
