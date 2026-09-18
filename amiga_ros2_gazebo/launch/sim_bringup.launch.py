@@ -224,6 +224,11 @@ def launch_setup(context, *args, **kwargs):
             # stack below -- both need this same flag so "no node relative
             # to the arm" actually holds when launch_arm is false.
             launch_arm=str(launch_arm).lower(),
+            # ground_truth_node.py's own map->base_link tf broadcast and
+            # the EKF stack's map->odom->base_link chain are two
+            # authorities for the same child frame -- never launch both.
+            # True exactly when launch_localization is false.
+            publish_ground_truth_tf=str(not launch_localization).lower(),
         ),
         _include(
             "amiga_ros2_gazebo",

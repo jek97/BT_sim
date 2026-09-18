@@ -361,6 +361,12 @@ def launch_setup(context, *args, **kwargs):
 
         bridge_args += robot_bridge_args(ns, name)
 
+        # frame_prefix matches urdf.launch.py's own robot_state_publisher
+        # arg -- "map" stays a single shared frame across robots, but
+        # base_link is namespaced the same way every other per-robot frame
+        # name in this repo already is (see lidar_object_navigator's own
+        # base_frame/lidar_link params in sim_bringup.launch.py).
+        frame_prefix = f"{ns}/" if ns else ""
         ground_truth_node = Node(
             package="amiga_ros2_gazebo",
             executable="ground_truth_node.py",
@@ -373,7 +379,21 @@ def launch_setup(context, *args, **kwargs):
                     "input_topic": f"/model/{name}/pose",
                     "output_topic": qualify_ros(ns, "ground_truth/pose"),
                     "frame_id": "map",
+                    "child_frame_id": f"{frame_prefix}base_link",
+                    # Tied to launch_localization (see
+                    # sim_bringup.launch.py's own publish_ground_truth_tf
+                    # forwarding) so this and the EKF stack are never both
+                    # broadcasting a map-rooted transform onto base_link at
+                    # once -- see ground_truth_node.py's own docstring.
+                    "publish_tf": LaunchConfiguration("publish_ground_truth_tf"),
                 },
+            ],
+            # tf2_ros hardcodes /tf, /tf_static as absolute regardless of
+            # node namespace -- same remap every other TF-publishing node
+            # in this repo's sim launch files gets.
+            remappings=[
+                ("/tf", qualify_ros(ns, "tf")),
+                ("/tf_static", qualify_ros(ns, "tf_static")),
             ],
         )
         actions.append(ground_truth_node)
@@ -478,6 +498,18 @@ def generate_launch_description():
                 "robot_spacing_y",
                 default_value="10.0",
                 description="Y offset (meters) added per robot index ",
+            ),
+            DeclareLaunchArgument(
+                "publish_ground_truth_tf",
+                default_value="true",
+                description="Have ground_truth_node.py broadcast its own "
+                "map->base_link tf (in addition to its ground_truth/pose "
+                "topic). Forwarded here from sim_bringup.launch.py's own "
+                "'not launch_localization' -- true exactly when the EKF "
+                "stack (the other publisher of a map-rooted transform onto "
+                "base_link) is NOT launched, so the two never fight over "
+                "the same frame; set explicitly if calling this file on "
+                "its own.",
             ),
             DeclareLaunchArgument(
                 "launch_arm",
