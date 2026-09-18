@@ -7,18 +7,12 @@
 
 # "cart" or "plow" -- must be the tool CURRENTLY equipped.
 string tool
-
-# Same battery-only restriction as InstallTool.action's own triggers port.
-string[] triggers
 ---
 # Result
 
-# "uninstall_success"/"uninstall_failure" if the full Duration elapsed,
-# or a battery trigger's own name -- same shape as InstallTool.action's
-# own reason port.
-string reason
-
-# true iff reason is "uninstall_success".
+# true iff the full Duration elapsed AND the coin flip succeeded --
+# false for anything else (a failed coin flip, a safety cutoff, a
+# cancel, a precondition failure).
 bool status
 ---
 # Feedback

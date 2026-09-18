@@ -17,30 +17,15 @@ stamped poses), not Bezier control points. So this node:
   2. Sends that Path as a FollowPath goal to Nav2's controller_server,
      forwarding its own feedback (distance_to_goal) back out as this
      action's own feedback.
-  3. While FollowPath runs, polls `triggers` (a real but partial subset
-     of schema.yaml's own MoveTo triggers vocabulary -- see
-     TRIGGER_FUNCTOR_TO_CONDITION below) against condition_service_node's
-     EvaluateCondition service, and cancels FollowPath the moment one
-     fires, reporting that trigger as the Result's own `reason` --
-     mirroring MoveTo's own "halts on whichever of Triggers occurs
-     earliest" contract.
+  3. While FollowPath runs, polls an ALWAYS-ON safety cutoff
+     (SafetyMonitor -- battery_state/chassis_contact_<side>, see
+     safety_monitor.py) and cancels FollowPath the moment it trips.
 
-NOT carried over from problog_project's own MoveTo semantics (see
-schema.yaml's own triggers port description for the full vocabulary):
-  - The AUTOMATIC collision/battery-depleted triggers bt_to_prolog.py
-    injects into every leg on the Prolog side. There is no equivalent
-    injection here -- only whatever `triggers` this action's own Goal
-    actually lists gets checked.
-  - line_of_sight_clear(...)/crosses_segment(...) (the Bug0/Bug2
-    boundary-leave triggers) -- EvaluateCondition's own LineOfSightClear
-    needs a goal point this action's Goal has no slot for; add one if a
-    future scenario needs Bug-algorithm legs driven through this
-    wrapper.
-  - A structural guard derived from a tree's own ReactiveSequence
-    siblings (schema.yaml's own "CONTROL-FLOW GUARD DERIVATION" note) --
-    that is a BT.cpp-tree-structure concept with no meaning at this
-    node's own level; it belongs in whatever future BT.cpp MoveTo leaf
-    calls this action, not here.
+This action takes only the input needed to execute the walk
+(control_points) and reports only success/failure (`status`) -- no
+configurable triggers port, no reason string: a BT.cpp leaf calling this
+only ever needs SUCCESS/FAILURE/RUNNING (RUNNING is inherent in the
+action still being active), so that's all this hands back.
 
 Caveat: this node has not been exercised against a live Nav2
 controller_server in this session (no ROS2/Nav2 environment available
@@ -51,7 +36,6 @@ relying on it.
 """
 import json
 import math
-import re
 import time
 
 import rclpy
@@ -68,29 +52,10 @@ from rcl_interfaces.srv import SetParameters
 from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
-from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners.bezier import sample_bezier_chain
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
 from amiga_ros2_planners.safety_monitor import SafetyMonitor
-
-# e.g. "battery_below(20)" -> ("battery_below", "20"). Matches the
-# semicolon-separated syntax schema.yaml's own MoveTo.triggers port
-# documents, minus the semicolons (this action's own Goal carries
-# triggers as a plain string[] already -- see MoveTo.action's own
-# header).
-TRIGGER_PATTERN = re.compile(r"^(\w+)\(\s*([-+]?[0-9]*\.?[0-9]+)\s*\)$")
-
-# Only the threshold-only conditions -- see this module's own docstring
-# for what's deliberately not supported (line_of_sight_clear/
-# crosses_segment need a goal point this action's Goal has no slot for).
-TRIGGER_FUNCTOR_TO_CONDITION = {
-    "obstacle_in_bound": "ObstacleInBound",
-    "obstacle_on_path": "ObstacleOnPath",
-    "battery_below": "BatteryBelow",
-    "battery_over": "BatteryOver",
-    "battery_equal": "BatteryEqual",
-}
 
 
 class MoveToNode(Node):
@@ -108,11 +73,12 @@ class MoveToNode(Node):
         # odom_frame->base_frame off tf2, unrelated to map localization.
         self.declare_parameter("pose_topic", "ground_truth/pose")
         self.declare_parameter("samples_per_segment", 10)
-        # Also bounds how quickly a BT-side cancel (e.g. a ReactiveSequence
-        # guard like BatteryOver failing) is even noticed here -- see
-        # _execute()'s own cancel-handling comment for the full latency
-        # budget this feeds into.
-        self.declare_parameter("trigger_poll_period_s", 0.2)
+        # How often the poll loop below wakes up to check for a cancel,
+        # the safety cutoff, or the max-duration backstop -- also bounds
+        # how quickly a BT-side cancel is noticed here (see _execute()'s
+        # own cancel-handling comment for the full latency budget this
+        # feeds into).
+        self.declare_parameter("poll_period_s", 0.2)
         # This node deliberately bypasses Nav2's own NavigateToPose/
         # bt_navigator pipeline (see this module's own docstring) --
         # unlike this repo's OTHER move actions (MoveToGPSLocation/
@@ -120,7 +86,7 @@ class MoveToNode(Node):
         # recovery behaviors: spin/backup/wait/clear-costmaps), a bare
         # FollowPath goal here has NO recovery layer of its own. If
         # controller_server ever stops making progress for a reason
-        # none of `triggers` covers (e.g. a stale local_costmap
+        # the safety cutoff doesn't cover (e.g. a stale local_costmap
         # observation source -- see sim_camera_shim.py's own respawn
         # comment for one concrete way that happens), this walk would
         # otherwise run forever with no way for the BT tree holding it
@@ -170,10 +136,10 @@ class MoveToNode(Node):
         self.declare_parameter("plough_cell_size", 1.0)
         self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
 
-        # ALWAYS-ON safety cutoff, independent of `triggers` -- see
-        # safety_monitor.py's own module docstring. Params match
-        # condition_service_node's own battery_topic/contact_topic_*/
-        # contact_stale_after_s names so one launch arg set covers both.
+        # ALWAYS-ON safety cutoff -- see safety_monitor.py's own module
+        # docstring. Params match condition_service_node's own
+        # battery_topic/contact_topic_*/contact_stale_after_s names so
+        # one launch arg set covers both.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
         self.declare_parameter("contact_topic_front", "chassis/contact_front")
@@ -221,13 +187,12 @@ class MoveToNode(Node):
             pose_topic=self.get_parameter("pose_topic").value,
         )
 
-        # Both the FollowPath client and the condition-evaluation calls
-        # need to complete WHILE this action's own execute callback is
-        # still running -- a ReentrantCallbackGroup plus the ActionServer's
-        # own default of running each goal's execute callback on its own
-        # thread is what lets this node wait on ANOTHER call's future
-        # from inside _execute() without deadlocking against this same
-        # node's own main spin.
+        # The FollowPath client needs to complete WHILE this action's own
+        # execute callback is still running -- a ReentrantCallbackGroup
+        # plus the ActionServer's own default of running each goal's
+        # execute callback on its own thread is what lets this node wait
+        # on ANOTHER call's future from inside _execute() without
+        # deadlocking against this same node's own main spin.
         #
         # That waiting is done with this module's own _wait_for_future()
         # (plain future.done() polling + time.sleep), deliberately NOT
@@ -236,22 +201,20 @@ class MoveToNode(Node):
         # reassigning this node's own .executor out from under whatever
         # already owns it (main()'s MultiThreadedExecutor here). Called
         # occasionally that's mostly harmless, but _execute() calls one
-        # of them on every trigger-poll tick of every walk, and the
-        # cancellation path fires two more back-to-back -- concurrent
-        # re-entrant spins like that are a known way for an executor to
-        # lose track of a node's callbacks. Observed effect: the very
-        # first walk of a mission always worked, but the walk
-        # immediately after the first BatteryOver-triggered cancel never
-        # produced a single piece of feedback again for the rest of that
-        # mission. _wait_for_future() never touches .executor at all --
-        # it just polls, so the externally-owned MultiThreadedExecutor
-        # remains the only thing that ever actually spins this node.
+        # of them on every poll tick of every walk, and the cancellation
+        # path fires two more back-to-back -- concurrent re-entrant spins
+        # like that are a known way for an executor to lose track of a
+        # node's callbacks. Observed effect: the very first walk of a
+        # mission always worked, but the walk immediately after the
+        # first safety-cutoff-triggered cancel never produced a single
+        # piece of feedback again for the rest of that mission.
+        # _wait_for_future() never touches .executor at all -- it just
+        # polls, so the externally-owned MultiThreadedExecutor remains
+        # the only thing that ever actually spins this node.
         self._cb_group = ReentrantCallbackGroup()
         self._follow_path_client = ActionClient(
             self, FollowPath, self.get_parameter("follow_path_action").value,
             callback_group=self._cb_group)
-        self._condition_client = self.create_client(
-            EvaluateCondition, "evaluate_condition", callback_group=self._cb_group)
         self._set_params_client = self.create_client(
             SetParameters,
             self.get_parameter("controller_server_set_parameters_service").value,
@@ -313,11 +276,11 @@ class MoveToNode(Node):
         NOT problog_project's own bracket-sampled-along-the-nominal-
         spline approach (there is no synthetic noisy spline here, Nav2
         drives the robot for real), so this samples the genuinely
-        actual path instead, at the same cadence _check_triggers
-        already polls at. Caller (_execute) is responsible for only
-        calling this while the walk started with the plow both hitched
-        AND deployed -- see basic_action_theory.pl's own ploughed/3
-        note (hitch(plow,SPrev), deployed(SPrev)) for why: this method
+        actual path instead, at the same cadence the poll loop already
+        runs at. Caller (_execute) is responsible for only calling this
+        while the walk started with the plow both hitched AND deployed
+        -- see basic_action_theory.pl's own ploughed/3 note
+        (hitch(plow,SPrev), deployed(SPrev)) for why: this method
         itself does not re-check either, so it can also be called once
         more right after a walk ends to catch the final resting cell."""
         xy = self._pose.get_xy()
@@ -364,24 +327,6 @@ class MoveToNode(Node):
         future = self._set_params_client.call_async(request)
         self._wait_for_future(future, timeout_sec=1.0)
 
-    def _parse_triggers(self, triggers):
-        parsed = []
-        for trigger in triggers:
-            match = TRIGGER_PATTERN.match(trigger.strip())
-            if not match:
-                self.get_logger().warn(
-                    f"unrecognized trigger syntax, ignoring: '{trigger}'")
-                continue
-            functor, value = match.group(1), float(match.group(2))
-            condition = TRIGGER_FUNCTOR_TO_CONDITION.get(functor)
-            if condition is None:
-                self.get_logger().warn(
-                    f"trigger '{trigger}' not supported by move_to_node "
-                    f"(supported: {sorted(TRIGGER_FUNCTOR_TO_CONDITION)}), ignoring")
-                continue
-            parsed.append((trigger, condition, value))
-        return parsed
-
     @staticmethod
     def _wait_for_future(future, timeout_sec, poll_interval_s=0.02):
         """Block up to timeout_sec for `future` to resolve, WITHOUT
@@ -400,23 +345,6 @@ class MoveToNode(Node):
                 return False
             time.sleep(poll_interval_s)
         return True
-
-    def _check_triggers(self, parsed_triggers):
-        """The first trigger string that currently evaluates true, or
-        None. One EvaluateCondition call per trigger per poll -- fine at
-        the sub-ten-triggers scale this vocabulary supports."""
-        for original, condition, threshold in parsed_triggers:
-            if not self._condition_client.service_is_ready():
-                continue
-            request = EvaluateCondition.Request()
-            request.condition = condition
-            request.threshold = threshold
-            future = self._condition_client.call_async(request)
-            self._wait_for_future(future, timeout_sec=1.0)
-            response = future.result()
-            if response is not None and response.result:
-                return original
-        return None
 
     def _build_path(self, control_points):
         samples = sample_bezier_chain(
@@ -444,7 +372,7 @@ class MoveToNode(Node):
         except ValueError as exc:
             self.get_logger().error(f"bad control_points: {exc}")
             goal_handle.abort()
-            result.reason, result.status = "aborted", False
+            result.status = False
             return result
 
         if not self._follow_path_client.wait_for_server(timeout_sec=5.0):
@@ -452,7 +380,7 @@ class MoveToNode(Node):
                 f"FollowPath action server "
                 f"'{self.get_parameter('follow_path_action').value}' unavailable")
             goal_handle.abort()
-            result.reason, result.status = "aborted", False
+            result.status = False
             return result
 
         # See this node's own constructor comment on why -- without a real
@@ -463,7 +391,7 @@ class MoveToNode(Node):
             self.get_logger().error(
                 "move_to_node: no odom pose after startup timeout, aborting")
             goal_handle.abort()
-            result.reason, result.status = "aborted", False
+            result.status = False
             return result
 
         follow_goal = FollowPath.Goal()
@@ -497,16 +425,15 @@ class MoveToNode(Node):
             if time.monotonic() >= deadline:
                 self.get_logger().error("FollowPath goal rejected")
                 goal_handle.abort()
-                result.reason, result.status = "aborted", False
+                result.status = False
                 return result
             self.get_logger().warn(
                 "FollowPath goal rejected (controller_server likely not "
                 "active yet), retrying...")
             time.sleep(0.5)
 
-        parsed_triggers = self._parse_triggers(list(goal.triggers))
         get_result_future = follow_path_goal_handle.get_result_async()
-        poll_period = self.get_parameter("trigger_poll_period_s").value
+        poll_period = self.get_parameter("poll_period_s").value
         max_walk_duration = self.get_parameter("max_walk_duration_s").value
         walk_start = time.monotonic()
 
@@ -521,13 +448,13 @@ class MoveToNode(Node):
         # marking itself -- called here at start, every poll, and once
         # more (in `finally`) after the walk ends, so the leg's start
         # AND final resting cell are both covered even on an early
-        # cancel/trigger/timeout, not just a full completion.
+        # cancel/cutoff/timeout, not just a full completion.
         should_plough = self._deployed and self._equipped_tool == "plow"
         if should_plough:
             self._mark_ploughed_here()
 
         try:
-            fired_trigger = None
+            safety_tripped = False
             while not get_result_future.done():
                 time.sleep(poll_period)
                 if should_plough:
@@ -543,14 +470,13 @@ class MoveToNode(Node):
                     self._wait_for_future(cancel_future, timeout_sec=2.0)
                     self._wait_for_future(get_result_future, timeout_sec=2.0)
                     goal_handle.abort()
-                    result.reason, result.status = "timeout", False
+                    result.status = False
                     return result
                 if goal_handle.is_cancel_requested:
                     # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
                     # waits for THIS action's own result before a containing
-                    # ReactiveSequence/Fallback can move on (e.g. to problog's
-                    # own GoHome branch once BatteryOver fails) -- worst case
-                    # here is trigger_poll_period_s (noticing the cancel) plus
+                    # ReactiveSequence/Fallback can move on -- worst case
+                    # here is poll_period_s (noticing the cancel) plus
                     # these two timeouts, so keep them tight; Nav2's own
                     # cancel ack/result normally arrive in well under a
                     # second on a local controller_server.
@@ -558,41 +484,33 @@ class MoveToNode(Node):
                     self._wait_for_future(cancel_future, timeout_sec=2.0)
                     self._wait_for_future(get_result_future, timeout_sec=2.0)
                     goal_handle.canceled()
-                    result.reason, result.status = "canceled", False
+                    result.status = False
                     return result
-                # ALWAYS-ON safety cutoff -- checked every poll regardless
-                # of `triggers`, same cancel-and-report-failure handling
-                # as a fired trigger below (see safety_monitor.py).
-                fired_trigger = self._safety.tripped()
-                if fired_trigger is not None:
+                # ALWAYS-ON safety cutoff -- checked every poll (see
+                # safety_monitor.py).
+                if self._safety.tripped() is not None:
+                    safety_tripped = True
                     cancel_future = follow_path_goal_handle.cancel_goal_async()
                     self._wait_for_future(cancel_future, timeout_sec=5.0)
                     self._wait_for_future(get_result_future, timeout_sec=5.0)
                     break
-                if parsed_triggers:
-                    fired_trigger = self._check_triggers(parsed_triggers)
-                    if fired_trigger is not None:
-                        cancel_future = follow_path_goal_handle.cancel_goal_async()
-                        self._wait_for_future(cancel_future, timeout_sec=5.0)
-                        self._wait_for_future(get_result_future, timeout_sec=5.0)
-                        break
 
-            if fired_trigger is not None:
+            if safety_tripped:
                 goal_handle.succeed()
-                result.reason, result.status = fired_trigger, False
+                result.status = False
                 return result
 
             follow_path_result = get_result_future.result()
             status = follow_path_result.status
             if status == GoalStatus.STATUS_SUCCEEDED:
                 goal_handle.succeed()
-                result.reason, result.status = "completed", True
+                result.status = True
             elif status == GoalStatus.STATUS_CANCELED:
                 goal_handle.canceled()
-                result.reason, result.status = "canceled", False
+                result.status = False
             else:
                 goal_handle.abort()
-                result.reason, result.status = "aborted", False
+                result.status = False
             return result
         finally:
             if should_plough:

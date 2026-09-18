@@ -1,6 +1,5 @@
 #pragma once
 
-#include <sstream>
 #include <string>
 
 #include <behaviortree_ros2/bt_action_node.hpp>
@@ -36,9 +35,6 @@ class ToolActionBase : public BT::RosActionNode<ActionT> {
   static BT::PortsList providedPorts() {
     return BT::RosActionNode<ActionT>::providedBasicPorts({
         BT::InputPort<std::string>("tool", "\"cart\" or \"plow\""),
-        BT::InputPort<std::string>(
-            "triggers", "", "semicolon-separated, battery-only trigger list"),
-        BT::OutputPort<std::string>("reason"),
         BT::OutputPort<bool>("status"),
     });
   }
@@ -52,17 +48,6 @@ class ToolActionBase : public BT::RosActionNode<ActionT> {
     }
     goal.tool = tool;
 
-    std::string triggers_text;
-    this->getInput("triggers", triggers_text);
-    goal.triggers.clear();
-    std::stringstream ss(triggers_text);
-    std::string trigger;
-    while (std::getline(ss, trigger, ';')) {
-      if (!trigger.empty()) {
-        goal.triggers.push_back(trigger);
-      }
-    }
-
     RCLCPP_INFO(this->logger(), "%s: requesting tool=%s",
                 this->name().c_str(), tool.c_str());
     return true;
@@ -72,20 +57,18 @@ class ToolActionBase : public BT::RosActionNode<ActionT> {
     if (result.code != rclcpp_action::ResultCode::SUCCEEDED &&
         result.code != rclcpp_action::ResultCode::CANCELED) {
       RCLCPP_ERROR(this->logger(), "%s: action aborted", this->name().c_str());
-      this->setOutput("reason", std::string("aborted"));
       this->setOutput("status", false);
       return BT::NodeStatus::FAILURE;
     }
 
-    this->setOutput("reason", result.result->reason);
     this->setOutput("status", result.result->status);
 
     if (result.result->status) {
       RCLCPP_INFO(this->logger(), "%s: completed", this->name().c_str());
       return BT::NodeStatus::SUCCESS;
     }
-    RCLCPP_WARN(this->logger(), "%s: halted, reason=%s", this->name().c_str(),
-                result.result->reason.c_str());
+    RCLCPP_WARN(this->logger(), "%s: halted (failed, battery depleted, "
+                "collision, or cancel)", this->name().c_str());
     return BT::NodeStatus::FAILURE;
   }
 

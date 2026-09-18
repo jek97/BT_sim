@@ -5,35 +5,31 @@
 # that's ALREADY installed -- currently restricted to tool kind=plow
 # only (see tool_action_node.py's own docstring) -- same start/halt
 # shape as InstallTool.action, a genuine mirror image reusing the exact
-# same fixed-Duration/battery-only-triggers/coin-flip machinery.
+# same fixed-Duration/coin-flip machinery.
 #
 # Server: amiga_ros2_planners' tool_action_node, which runs this for
 # `tool`'s own configured Duration (this problem's own config.yaml,
-# tool.deploy.duration_seconds.<kind>), halting early on whichever of
-# `triggers` fires first, or resolving a success/failure coin flip
-# (tool.deploy.success_probability) once the full Duration elapses with
-# nothing halting it early. On success, tool_action_node marks its own
-# tracked tool as DEPLOYED -- see move_to_node.py's own note on how
-# that changes a SUBSEQUENT MoveTo's speed (tool.equipped.<kind>.
-# deployed_speed), and battery_sim_node's own note on how it changes
-# moving_drain_rate (tool.equipped.<kind>.deployed_moving_drain_rate).
+# tool.deploy.duration_seconds.<kind>), resolving a success/failure coin
+# flip (tool.deploy.success_probability) once the full Duration elapses,
+# or halting early if an always-on safety cutoff trips (battery
+# depleted / collision detected -- safety_monitor.py). On success,
+# tool_action_node marks its own tracked tool as DEPLOYED -- see
+# move_to_node.py's own note on how that changes a SUBSEQUENT MoveTo's
+# speed (tool.equipped.<kind>.deployed_speed), and battery_sim_node's
+# own note on how it changes moving_drain_rate
+# (tool.equipped.<kind>.deployed_moving_drain_rate). Only takes the
+# input needed to execute: no triggers/reason port, and the result
+# reports only success/failure (see `status` below), not why.
 
 # The tool INSTANCE id (e.g. "plow1") currently attached -- same id= an
 # earlier InstallTool.action goal used. Its own kind must be plow.
 string tool
-
-# Same battery-only restriction as InstallTool.action's own triggers port.
-string[] triggers
 ---
 # Result
 
-# "deploy_success"/"deploy_failure" if the full Duration elapsed
-# (matching InstallTool.action's own bare-reason adaptation of
-# schema.yaml's literal deploy_tool_success(Tool,ActionCode) term), or
-# the name of whichever battery trigger fired first.
-string reason
-
-# true iff reason is "deploy_success".
+# true iff the full Duration elapsed AND the coin flip succeeded --
+# false for anything else (a failed coin flip, a safety cutoff, a
+# cancel, a precondition failure).
 bool status
 ---
 # Feedback

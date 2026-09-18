@@ -8,13 +8,15 @@ ROS2-action form of problog_project's install_tool_leg/uninstall_tool_leg/
 deploy_tool_leg/retract_tool_leg BT nodes (see
 module/contracts/schema.yaml's own entries for each). All four are
 durative, same start/halt shape as move_to_node's own MoveTo -- a
-fixed-Duration action, halting early on whichever of `triggers`
-(battery-only, see TRIGGER_FUNCTOR_TO_CONDITION below) fires first, or
-resolving a success/failure coin flip once the full Duration elapses
-with nothing halting it early. The robot never moves during any of the
-four -- no path, no odometry noise, no FollowPath goal at all, just a
-wall-clock wait with periodic trigger polling (move_to_node's own
-_execute() loop, minus the FollowPath half).
+fixed-Duration action, halting early if an ALWAYS-ON safety cutoff trips
+(SafetyMonitor -- battery depleted or collision detected, see
+safety_monitor.py), or resolving a success/failure coin flip once the
+full Duration elapses with nothing halting it early. The robot never
+moves during any of the four -- no path, no odometry noise, no
+FollowPath goal at all, just a wall-clock wait with periodic safety
+polling (move_to_node's own _execute() loop, minus the FollowPath
+half). Each action takes only the input needed to execute (`tool`) and
+reports only success/failure (`status`) -- no triggers/reason port.
 
 Also hosts HitchedId/NearestToolOfKind (amiga_interfaces/srv/
 {HitchedId,NearestToolOfKind}) -- the ROS2-SERVICE form of
@@ -90,7 +92,6 @@ same _wait_for_future() pattern.
 """
 import json
 import random
-import re
 import time
 
 import rclpy
@@ -101,7 +102,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 
 from amiga_interfaces.action import InstallTool, UninstallTool, DeployTool, RetractTool
-from amiga_interfaces.srv import EvaluateCondition, HitchedId, NearestToolOfKind
+from amiga_interfaces.srv import HitchedId, NearestToolOfKind
 from amiga_ros2_planners.pose import PoseProvider
 from amiga_ros2_planners.safety_monitor import SafetyMonitor
 
@@ -119,21 +120,6 @@ _ACTION_TYPES = {
     "retract": RetractTool,
 }
 
-# Battery-only, same functor syntax move_to_node.py's own
-# TRIGGER_PATTERN/TRIGGER_FUNCTOR_TO_CONDITION use, restricted to the
-# battery-related entries -- schema.yaml's own triggers port on all
-# four of these actions is a HARD translation-time error for any
-# motion-based name in the formal pipeline; this node has no separate
-# translation pass, so it degrades a disallowed name to a warning +
-# ignore instead (same non-fatal treatment move_to_node.py already
-# gives an unrecognized trigger).
-TRIGGER_PATTERN = re.compile(r"^(\w+)\(\s*([-+]?[0-9]*\.?[0-9]+)\s*\)$")
-TRIGGER_FUNCTOR_TO_CONDITION = {
-    "battery_below": "BatteryBelow",
-    "battery_over": "BatteryOver",
-    "battery_equal": "BatteryEqual",
-}
-
 _LATCHED_QOS = QoSProfile(depth=1)
 _LATCHED_QOS.durability = DurabilityPolicy.TRANSIENT_LOCAL
 _LATCHED_QOS.reliability = ReliabilityPolicy.RELIABLE
@@ -143,7 +129,7 @@ class ToolActionNode(Node):
     def __init__(self):
         super().__init__("tool_action_node")
 
-        self.declare_parameter("trigger_poll_period_s", 0.2)
+        self.declare_parameter("poll_period_s", 0.2)
         self.declare_parameter("install_duration_cart_s", 10.0)
         self.declare_parameter("install_duration_plow_s", 10.0)
         self.declare_parameter("uninstall_duration_cart_s", 10.0)
@@ -176,10 +162,9 @@ class ToolActionNode(Node):
         # tf2 transform. Empty string restores the tf2 lookup.
         self.declare_parameter("pose_topic", "ground_truth/pose")
 
-        # ALWAYS-ON safety cutoff, independent of `triggers` (which is
-        # battery-only and OPTIONAL here anyway -- see this module's own
-        # docstring) -- see safety_monitor.py's own module docstring /
-        # move_to_node.py's own identical params for the full rationale.
+        # ALWAYS-ON safety cutoff -- see safety_monitor.py's own module
+        # docstring / move_to_node.py's own identical params for the
+        # full rationale.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
         self.declare_parameter("contact_topic_front", "chassis/contact_front")
@@ -192,7 +177,7 @@ class ToolActionNode(Node):
 
         # In-memory only -- this node's own lifetime IS the mission's
         # lifetime (same "one process, one source of truth" assumption
-        # move_to_node.py's own trigger-checking loop already makes).
+        # move_to_node.py's own poll loop already makes).
         self._equipped_tool = "free"
         self._equipped_instance_id = None
         self._deployed = False
@@ -205,8 +190,6 @@ class ToolActionNode(Node):
         )
 
         self._cb_group = ReentrantCallbackGroup()
-        self._condition_client = self.create_client(
-            EvaluateCondition, "evaluate_condition", callback_group=self._cb_group)
         self._safety = SafetyMonitor(
             self,
             battery_topic=self.get_parameter("battery_topic").value,
@@ -328,41 +311,6 @@ class ToolActionNode(Node):
             time.sleep(poll_interval_s)
         return True
 
-    def _parse_triggers(self, triggers):
-        parsed = []
-        for trigger in triggers:
-            match = TRIGGER_PATTERN.match(trigger.strip())
-            if not match:
-                self.get_logger().warn(
-                    f"unrecognized trigger syntax, ignoring: '{trigger}'")
-                continue
-            functor, value = match.group(1), float(match.group(2))
-            condition = TRIGGER_FUNCTOR_TO_CONDITION.get(functor)
-            if condition is None:
-                self.get_logger().warn(
-                    f"trigger '{trigger}' not supported by tool_action_node "
-                    f"(battery-only; supported: "
-                    f"{sorted(TRIGGER_FUNCTOR_TO_CONDITION)}), ignoring")
-                continue
-            parsed.append((trigger, condition, value))
-        return parsed
-
-    def _check_triggers(self, parsed_triggers):
-        """Same shape as move_to_node.py's own _check_triggers -- one
-        EvaluateCondition call per trigger per poll."""
-        for original, condition, threshold in parsed_triggers:
-            if not self._condition_client.service_is_ready():
-                continue
-            request = EvaluateCondition.Request()
-            request.condition = condition
-            request.threshold = threshold
-            future = self._condition_client.call_async(request)
-            self._wait_for_future(future, timeout_sec=1.0)
-            response = future.result()
-            if response is not None and response.result:
-                return original
-        return None
-
     def _check_precondition(self, mode, tool_id):
         """None if OK to proceed, else an abort reason string. Every
         one of the four actions' own preconditions lives here, kept
@@ -443,16 +391,15 @@ class ToolActionNode(Node):
             self.get_logger().error(
                 f"{label}: precondition failed for '{tool_id}': {precondition_failure}")
             goal_handle.abort()
-            result.reason, result.status = precondition_failure, False
+            result.status = False
             return result
 
         kind = (self._tool_instances[tool_id]["kind"] if mode == "install"
                 else self._equipped_tool)
         duration = self.get_parameter(f"{mode}_duration_{kind}_s").value
         success_probability = self.get_parameter(f"{mode}_success_probability").value
-        poll_period = self.get_parameter("trigger_poll_period_s").value
+        poll_period = self.get_parameter("poll_period_s").value
 
-        parsed_triggers = self._parse_triggers(list(goal.triggers))
         activity = {"install": "installing", "uninstall": "uninstalling",
                     "deploy": "deploying", "retract": "retracting"}[mode]
         self._publish_tool_activity(activity)
@@ -460,7 +407,7 @@ class ToolActionNode(Node):
 
         try:
             start = time.monotonic()
-            fired_trigger = None
+            safety_tripped = False
             while True:
                 elapsed = time.monotonic() - start
                 fb = action_type.Feedback()
@@ -471,20 +418,17 @@ class ToolActionNode(Node):
                     break
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
-                    result.reason, result.status = "canceled", False
+                    result.status = False
                     return result
-                fired_trigger = self._safety.tripped()
-                if fired_trigger is not None:
+                # ALWAYS-ON safety cutoff (see safety_monitor.py).
+                if self._safety.tripped() is not None:
+                    safety_tripped = True
                     break
-                if parsed_triggers:
-                    fired_trigger = self._check_triggers(parsed_triggers)
-                    if fired_trigger is not None:
-                        break
                 time.sleep(poll_period)
 
-            if fired_trigger is not None:
+            if safety_tripped:
                 goal_handle.succeed()
-                result.reason, result.status = fired_trigger, False
+                result.status = False
                 return result
 
             success = random.random() < success_probability
@@ -494,7 +438,6 @@ class ToolActionNode(Node):
                     f"{label}: succeeded ('{tool_id}'), equipped="
                     f"'{self._equipped_tool}' deployed={self._deployed}")
             goal_handle.succeed()
-            result.reason = f"{mode}_success" if success else f"{mode}_failure"
             result.status = success
             return result
         finally:

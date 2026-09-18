@@ -9,18 +9,12 @@
 # The tool INSTANCE id (e.g. "plow1") currently deployed -- same id= an
 # earlier DeployTool.action goal used.
 string tool
-
-# Same battery-only restriction as InstallTool.action's own triggers port.
-string[] triggers
 ---
 # Result
 
-# "retract_success"/"retract_failure" if the full Duration elapsed, or
-# a battery trigger's own name -- same shape as DeployTool.action's own
-# reason port.
-string reason
-
-# true iff reason is "retract_success".
+# true iff the full Duration elapsed AND the coin flip succeeded --
+# false for anything else (a failed coin flip, a safety cutoff, a
+# cancel, a precondition failure).
 bool status
 ---
 # Feedback

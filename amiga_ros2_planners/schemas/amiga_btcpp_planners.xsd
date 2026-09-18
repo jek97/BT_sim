@@ -493,10 +493,6 @@
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="move_to" />
         <xs:attribute name="control_points" type="portValueType" use="required" />
-        <!-- semicolon-separated trigger list, e.g.
-             "obstacle_in_bound(0.6);battery_below(20)" -->
-        <xs:attribute name="triggers" type="xs:string" use="optional" />
-        <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
@@ -516,12 +512,11 @@
     </xs:complexType>
 
     <!-- InstallTool / UninstallTool — durative, same start/halt shape
-         as MoveTo; the robot never moves during either, so triggers is
-         RESTRICTED to battery-related names only (see
-         amiga_ros2_planners/tool_action_node.py's own
-         TRIGGER_FUNCTOR_TO_CONDITION). action_name is fixed, naming
-         amiga_ros2_planners' tool_action_node's own "install_tool"/
-         "uninstall_tool" actions. -->
+         as MoveTo. action_name is fixed, naming amiga_ros2_planners'
+         tool_action_node's own "install_tool"/"uninstall_tool"
+         actions. Halts early only via the always-on safety cutoff
+         (battery depleted / collision detected — see
+         safety_monitor.py), not a configurable trigger list. -->
     <!-- `tool` used to be a fixed cart/plow KIND enum; problog_project's
          own tool-instance-id refactor made it a specific tool INSTANCE
          id from that problem's own config.yaml tool.instances (e.g.
@@ -536,10 +531,6 @@
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="install_tool" />
         <xs:attribute name="tool" type="xs:string" use="required" />
-        <!-- semicolon-separated, battery-only trigger list, e.g.
-             "battery_below(20)" -->
-        <xs:attribute name="triggers" type="xs:string" use="optional" />
-        <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
@@ -548,8 +539,6 @@
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="uninstall_tool" />
         <xs:attribute name="tool" type="xs:string" use="required" />
-        <xs:attribute name="triggers" type="xs:string" use="optional" />
-        <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
@@ -563,8 +552,6 @@
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="deploy_tool" />
         <xs:attribute name="tool" type="xs:string" use="required" />
-        <xs:attribute name="triggers" type="xs:string" use="optional" />
-        <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 
@@ -573,8 +560,6 @@
         <xs:attribute name="action_name" type="xs:string" use="optional"
             fixed="retract_tool" />
         <xs:attribute name="tool" type="xs:string" use="required" />
-        <xs:attribute name="triggers" type="xs:string" use="optional" />
-        <xs:attribute name="reason" type="portValueType" use="optional" />
         <xs:attribute name="status" type="portValueType" use="optional" />
     </xs:complexType>
 

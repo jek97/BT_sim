@@ -26,17 +26,13 @@ anywhere in this file). Instead:
      genuine PURSUIT controller (continuously replanning velocity from
      the actual measured pose vs. the path), which this deliberately
      does not.
-  4. While running, still polls `triggers` against condition_service_
-     node's EvaluateCondition service and cancels the walk the moment
-     one fires -- same vocabulary/contract as move_to_node.py's own
-     TRIGGER_FUNCTOR_TO_CONDITION (duplicated here rather than shared,
-     matching this package's own existing precedent of each node
-     keeping its own small copy -- e.g. tool_action_node.py's own
-     battery-only subset). Note those TRIGGERS themselves are still
-     evaluated against the robot's REAL tf2 pose (condition_service_
-     node's own concern, unaffected by this node) -- "open loop" here
-     describes how the WALK ITSELF is driven, not whether a trigger can
-     still detect the real robot straying into e.g. an obstacle.
+  4. While running, still polls an ALWAYS-ON safety cutoff
+     (SafetyMonitor -- battery_state/chassis_contact_<side>, see
+     safety_monitor.py) and cancels the walk the moment it trips. Note
+     that check is against the robot's REAL sensors, not this backend's
+     own nominal pose -- "open loop" here describes how the WALK ITSELF
+     is driven, not whether a real collision/battery event can still
+     stop it.
   5. Also mirrors move_to_node.py's own tool-speed selection (tool_
      state/tool_deployed topics -> tool_speed_<kind>[_deployed]_mps)
      and ploughed-cell marking (ploughing.py) -- using this walk's own
@@ -64,12 +60,15 @@ Caveat: not exercised against a live Gazebo/ros2_control diff_drive_
 controller in this session (no ROS2 environment available here) --
 open_loop_trajectory.py's own math (segment timing, unicycle
 integration) is unit-tested and verified in isolation; the cmd_vel
-publishing/trigger-polling/action-server plumbing itself should be
-smoke-tested against your own sim before relying on it, same caveat
-move_to_node.py's own docstring already carries for FollowPath.
+publishing/action-server plumbing itself should be smoke-tested against
+your own sim before relying on it, same caveat move_to_node.py's own
+docstring already carries for FollowPath.
+
+Same interface as move_to_node.py: takes only the input needed to
+execute the walk (control_points) and reports only success/failure
+(`status`) -- see MoveTo.action's own header.
 """
 import json
-import re
 import time
 
 import rclpy
@@ -81,25 +80,12 @@ from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
-from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners.bezier import sample_bezier_chain
 from amiga_ros2_planners.open_loop_trajectory import (
     build_velocity_segments, integrate_unicycle_step,
 )
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.safety_monitor import SafetyMonitor
-
-# Same vocabulary/pattern as move_to_node.py's own TRIGGER_PATTERN/
-# TRIGGER_FUNCTOR_TO_CONDITION -- see this module's own docstring for
-# why this is a small duplicated copy rather than a shared import.
-TRIGGER_PATTERN = re.compile(r"^(\w+)\(\s*([-+]?[0-9]*\.?[0-9]+)\s*\)$")
-TRIGGER_FUNCTOR_TO_CONDITION = {
-    "obstacle_in_bound": "ObstacleInBound",
-    "obstacle_on_path": "ObstacleOnPath",
-    "battery_below": "BatteryBelow",
-    "battery_over": "BatteryOver",
-    "battery_equal": "BatteryEqual",
-}
 
 
 class MoveToOpenLoopNode(Node):
@@ -115,7 +101,6 @@ class MoveToOpenLoopNode(Node):
         # next waypoint's own heading" segment's own speed, since
         # nothing else constrains angular_z otherwise).
         self.declare_parameter("max_angular_speed_rps", 1.0)
-        self.declare_parameter("trigger_poll_period_s", 0.2)
         # Same names/defaults as move_to_node.py's own tool_speed_*
         # params, so a launch file can hand this node the SAME values
         # with no translation needed.
@@ -131,9 +116,9 @@ class MoveToOpenLoopNode(Node):
         self.declare_parameter("plough_cell_size", 1.0)
         self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
 
-        # ALWAYS-ON safety cutoff, independent of `triggers` -- see
-        # safety_monitor.py's own module docstring / move_to_node.py's
-        # own identical params for the full rationale.
+        # ALWAYS-ON safety cutoff -- see safety_monitor.py's own module
+        # docstring / move_to_node.py's own identical params for the
+        # full rationale.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
         self.declare_parameter("contact_topic_front", "chassis/contact_front")
@@ -156,8 +141,6 @@ class MoveToOpenLoopNode(Node):
         )
         self._cmd_vel_pub = self.create_publisher(
             Twist, self.get_parameter("cmd_vel_topic").value, 10)
-        self._condition_client = self.create_client(
-            EvaluateCondition, "evaluate_condition", callback_group=self._cb_group)
 
         # "free"/False are tool_action_node's own initial published
         # values -- see move_to_node.py's own identical constructor
@@ -231,24 +214,6 @@ class MoveToOpenLoopNode(Node):
             "plow": self.get_parameter("tool_speed_plow_mps").value,
         }.get(self._equipped_tool, self.get_parameter("tool_speed_free_mps").value)
 
-    def _parse_triggers(self, triggers):
-        parsed = []
-        for trigger in triggers:
-            match = TRIGGER_PATTERN.match(trigger.strip())
-            if not match:
-                self.get_logger().warn(
-                    f"unrecognized trigger syntax, ignoring: '{trigger}'")
-                continue
-            functor, value = match.group(1), float(match.group(2))
-            condition = TRIGGER_FUNCTOR_TO_CONDITION.get(functor)
-            if condition is None:
-                self.get_logger().warn(
-                    f"trigger '{trigger}' not supported by move_to_openloop_node "
-                    f"(supported: {sorted(TRIGGER_FUNCTOR_TO_CONDITION)}), ignoring")
-                continue
-            parsed.append((trigger, condition, value))
-        return parsed
-
     @staticmethod
     def _wait_for_future(future, timeout_sec, poll_interval_s=0.02):
         """See move_to_node.py's own _wait_for_future -- identical
@@ -261,20 +226,6 @@ class MoveToOpenLoopNode(Node):
                 return False
             time.sleep(poll_interval_s)
         return True
-
-    def _check_triggers(self, parsed_triggers):
-        for original, condition, threshold in parsed_triggers:
-            if not self._condition_client.service_is_ready():
-                continue
-            request = EvaluateCondition.Request()
-            request.condition = condition
-            request.threshold = threshold
-            future = self._condition_client.call_async(request)
-            self._wait_for_future(future, timeout_sec=1.0)
-            response = future.result()
-            if response is not None and response.result:
-                return original
-        return None
 
     def _publish_cmd_vel(self, linear_x, angular_z):
         twist = Twist()
@@ -296,7 +247,7 @@ class MoveToOpenLoopNode(Node):
         except ValueError as exc:
             self.get_logger().error(f"bad control_points: {exc}")
             goal_handle.abort()
-            result.reason, result.status = "aborted", False
+            result.status = False
             return result
 
         speed = self._resolve_speed()
@@ -312,10 +263,9 @@ class MoveToOpenLoopNode(Node):
         if not segments:
             # Degenerate "already there" chain -- nothing to command.
             goal_handle.succeed()
-            result.reason, result.status = "completed", True
+            result.status = True
             return result
 
-        parsed_triggers = self._parse_triggers(list(goal.triggers))
         control_period = self.get_parameter("control_period_s").value
 
         segment_idx = 0
@@ -328,19 +278,13 @@ class MoveToOpenLoopNode(Node):
 
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
-                    result.reason, result.status = "canceled", False
+                    result.status = False
                     return result
-                safety_reason = self._safety.tripped()
-                if safety_reason is not None:
+                # ALWAYS-ON safety cutoff (see safety_monitor.py).
+                if self._safety.tripped() is not None:
                     goal_handle.succeed()
-                    result.reason, result.status = safety_reason, False
+                    result.status = False
                     return result
-                if parsed_triggers:
-                    fired = self._check_triggers(parsed_triggers)
-                    if fired is not None:
-                        goal_handle.succeed()
-                        result.reason, result.status = fired, False
-                        return result
 
                 now = time.monotonic()
                 remaining_dt = now - last_tick
@@ -377,7 +321,7 @@ class MoveToOpenLoopNode(Node):
             if should_plough:
                 self._mark_ploughed(final_x, final_y)
             goal_handle.succeed()
-            result.reason, result.status = "completed", True
+            result.status = True
             return result
         finally:
             self._stop()

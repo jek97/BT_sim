@@ -33,9 +33,8 @@ using EvaluateCondition = amiga_interfaces::srv::EvaluateCondition;
 // forever, never "completed"/"failed"). A Condition is semantically
 // supposed to resolve within one tick anyway (BT.cpp's own convention:
 // conditions never return RUNNING), so this blocks synchronously
-// instead -- the same pattern move_to_node.py's own _check_triggers
-// already uses for this exact service (call_async +
-// spin_until_future_complete).
+// instead -- the same call_async + spin_until_future_complete pattern
+// used elsewhere in this repo for a synchronous service call.
 class EvaluateConditionBase : public BT::SyncActionNode {
  public:
   using Request = EvaluateCondition::Request;

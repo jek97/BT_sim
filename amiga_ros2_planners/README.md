@@ -64,10 +64,10 @@ can't make an unbuilt leaf tick.
 | `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm` (`astar`/`straight`/`voronoi`/`follow_boarder`/`dastar`). Also hosts `PlanPathWaypoints.srv` — the ROS2-service form of `PlanWithWaypoints` (the multi-waypoint generalization of `astar`/`straight`), on a separate `plan_path_waypoints` service. |
 | `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`** (including `Hitched`/`Deployed`, read from `tool_action_node`'s own latched `tool_state`/`tool_deployed` topics, and `PloughedAt`/`PloughedBetween`, read from `move_to_node`'s own latched `ploughed_cells` topic), plus `CollisionDetected` (this simulation's own addition, no `schema.yaml` counterpart): reads whether `amiga_kinova/model.sdf`'s own `chassis_contact_<front\|back\|left\|right>` Gazebo contact sensors currently report contact — genuine physics collision between the robot's real collision shape and the environment's, not the tf2-vs-tracked-obstacle-list approximation every other condition here uses. |
 | `amiga_ros2_planners/battery_sim_node.py` | new | A simulated battery percentage (this simulation has no real one) so `Battery*` conditions have something to read. |
-| `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls a real subset of `triggers` against `condition_service_node` and cancels early if one fires. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. Selected by `move_to_backend:=nav2` (default) — see `move_to_openloop_node.py`'s row below for the alternative. |
-| `amiga_ros2_planners/move_to_openloop_node.py` | new | Hosts the SAME `MoveTo` action, as a NAV2-FREE alternative backend (`move_to_backend:=openloop`): samples `control_points` the same way, then converts the polyline directly into `cmd_vel` `Twist` commands via a pure feedforward computation (`open_loop_trajectory.py`) — no tf2/odometry read anywhere, ever. Correct only as long as the plan and the real robot stay in agreement; see that node's own module docstring for the full "why open loop, what it costs" rationale. Still polls the same trigger vocabulary/tool-speed selection/ploughing as `move_to_node.py`, just against its own dead-reckoned position rather than a real tf2 pose. |
+| `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls an always-on safety cutoff (`SafetyMonitor`) and cancels early if it trips. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. Selected by `move_to_backend:=nav2` (default) — see `move_to_openloop_node.py`'s row below for the alternative. |
+| `amiga_ros2_planners/move_to_openloop_node.py` | new | Hosts the SAME `MoveTo` action, as a NAV2-FREE alternative backend (`move_to_backend:=openloop`): samples `control_points` the same way, then converts the polyline directly into `cmd_vel` `Twist` commands via a pure feedforward computation (`open_loop_trajectory.py`) — no tf2/odometry read anywhere, ever. Correct only as long as the plan and the real robot stay in agreement; see that node's own module docstring for the full "why open loop, what it costs" rationale. Still polls the same safety cutoff/tool-speed selection/ploughing as `move_to_node.py`, just against its own dead-reckoned position rather than a real tf2 pose. |
 | `amiga_ros2_planners/sample_service_node.py` | new | Hosts `TakeSample.srv` — the ROS2-service form of `TakeSample`: one `random.random() < success_probability` draw, the literal formula `problog_project/module/contracts/bt_actions.py`'s own `bt_take_sample` uses. On success, also draws a VALUE keyed by the tree's own `id="..."` port — either `sample.value.discretized`'s own explicit `{value,weight}` outcome list (a weighted-random pick, takes priority if configured) or the original `sample.value.mean`/`.sigma` discretized Normal over 0-10 — and republishes every id's own value in full on a latched `sample_values` topic (JSON) — `condition_service_node` subscribes to answer `SampleValueBelow`/`Equal`/`Over`. |
-| `amiga_ros2_planners/tool_action_node.py` | new | Hosts `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` (actions) — fixed-Duration, no motion, same start/halt/triggers shape as `MoveTo` minus the trajectory. `tool` names a specific tool INSTANCE id (config.yaml's `tool.instances: [{id,kind,x,y}]`, resolved to a kind here), and `InstallTool` additionally requires the robot be within `install_range` of that instance's own declared position. `DeployTool`/`RetractTool` lower/raise an already-installed tool (currently plow-only) between which `ploughed`-style effects would apply. Tracks the currently-equipped tool's kind ("free"/"cart"/"plow"), which specific instance id, and whether it's deployed, publishing all of it on latched `tool_state`/`tool_activity`/`tool_deployed` topics `move_to_node`/`battery_sim_node` both subscribe to (selecting `tool.equipped.<kind>.deployed_speed`/`.deployed_moving_drain_rate` instead of the regular value while deployed). Also hosts `HitchedId`/`NearestToolOfKind` (`.srv`, INSTANTANEOUS query actions) against this SAME tracked state — no separate lookup mechanism. |
+| `amiga_ros2_planners/tool_action_node.py` | new | Hosts `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` (actions) — fixed-Duration, no motion, same start/halt/safety-cutoff shape as `MoveTo` minus the trajectory. `tool` names a specific tool INSTANCE id (config.yaml's `tool.instances: [{id,kind,x,y}]`, resolved to a kind here), and `InstallTool` additionally requires the robot be within `install_range` of that instance's own declared position. `DeployTool`/`RetractTool` lower/raise an already-installed tool (currently plow-only) between which `ploughed`-style effects would apply. Tracks the currently-equipped tool's kind ("free"/"cart"/"plow"), which specific instance id, and whether it's deployed, publishing all of it on latched `tool_state`/`tool_activity`/`tool_deployed` topics `move_to_node`/`battery_sim_node` both subscribe to (selecting `tool.equipped.<kind>.deployed_speed`/`.deployed_moving_drain_rate` instead of the regular value while deployed). Also hosts `HitchedId`/`NearestToolOfKind` (`.srv`, INSTANTANEOUS query actions) against this SAME tracked state — no separate lookup mechanism. |
 | `amiga_interfaces/srv/PlanPath.srv`, `EvaluateCondition.srv`, `TakeSample.srv`, `action/MoveTo.action`, `InstallTool.action`, `UninstallTool.action`, `DeployTool.action`, `RetractTool.action` | new | Interfaces for the backends above. |
 | `schemas/amiga_btcpp_planners.xsd` | new (local copy) | `amiga_ros2_behavior_tree`'s own `amiga_btcpp.xsd`, extended with `PlanWith`/`MoveTo`/`TakeSample`/`InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool`/`Repeat`/every Condition except `HaltedWith` (deliberately excluded — see the file's own header), plus `Inverter` and a broadened `Fallback` (see "Running a problog_project BT" below for why). A **local copy**, not an edit to the submodule in place. |
 | `scripts/export_orchard_map.py` | new | Standalone (no ROS2 needed), extracts a real orchard from a checked-in mission fixture and writes a `map.pgm`/`map.yaml` pair — see "Saved orchard map instance" below. |
@@ -358,23 +358,22 @@ points. `move_to_node.py`:
    finite-differenced), and builds a `nav_msgs/Path` from it.
 2. Sends that `Path` as a `FollowPath` goal, forwarding its own
    `distance_to_goal` feedback back out as `MoveTo`'s own feedback.
-3. While `FollowPath` runs, polls a real subset of `triggers`
-   (`obstacle_in_bound(T)`, `obstacle_on_path(T)`, `battery_below(T)`,
-   `battery_over(T)`, `battery_equal(T)` — see `TRIGGER_FUNCTOR_TO_CONDITION`
-   in the module) against `condition_service_node`'s `EvaluateCondition`,
-   cancelling `FollowPath` and reporting that trigger as `MoveTo`'s own
-   `reason` the moment one fires.
+3. While `FollowPath` runs, polls an ALWAYS-ON safety cutoff
+   (`SafetyMonitor` — `battery_state`/`chassis_contact_<side>`, see
+   `safety_monitor.py`) and cancels `FollowPath` the moment it trips.
 
-**Not carried over** (see `move_to_node.py`'s own module docstring for
-the full reasoning): the automatic collision/battery triggers
-`problog_project`'s own `bt_to_prolog.py` injects into every leg on the
-Prolog side (nothing injects them here — only what `triggers` the Goal
-itself lists gets checked); `line_of_sight_clear(...)`/
-`crosses_segment(...)` (need a goal point this action's own Goal has no
-slot for); and the structural ReactiveSequence-sibling guard derivation
-schema.yaml describes (a BT.cpp-tree-structure concept, meaningless at
-this node's level — it belongs in a future BT.cpp `MoveTo` leaf, not
-here).
+**No configurable `triggers` port.** An earlier revision had `MoveTo`
+(and `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool`) accept a
+mission-authored `triggers` list checked against
+`condition_service_node`'s `EvaluateCondition`, plus a `reason` output
+port explaining why an action stopped. Both were removed: every one of
+these actions now takes only the input it needs to execute
+(`control_points`/`tool`) and reports only `status` (success/failure) —
+a BT.cpp leaf only ever needs SUCCESS/FAILURE/RUNNING, and RUNNING is
+already inherent in the ROS action still being active. The only thing
+that stops an action early besides completion/cancel is the always-on
+safety cutoff described above, which is unconditional and not
+mission-configurable.
 
 **This has not been run against a live Nav2 `controller_server`** — no
 ROS2/Nav2 environment was available in this session to exercise it.
@@ -474,12 +473,12 @@ not launching a controller for it.
   is untested against a live `cmd_vel`/`diff_drive_controller`** —
   `open_loop_trajectory.py`'s own math (segment timing, unicycle
   integration) is unit-tested and verified in isolation; the
-  publishing/trigger-polling/action-server plumbing itself should be
-  smoke-tested before relying on it, same caveat as `move_to_node`'s
-  own `FollowPath` integration above. Being open-loop, it also has NO
-  way to detect or correct real-world drift from the plan — that is
-  the deliberate tradeoff for not needing Nav2/tf2/odometry at all, not
-  a bug to fix.
+  publishing/action-server plumbing itself should be smoke-tested
+  before relying on it, same caveat as `move_to_node`'s own
+  `FollowPath` integration above. Being open-loop, it also has NO way
+  to detect or correct real-world drift from the plan — that is the
+  deliberate tradeoff for not needing Nav2/tf2/odometry at all, not a
+  bug to fix.
 - **`HaltedWith` is not implemented anywhere**, and is excluded from
   `xml_validation` entirely.
 - **`ObstacleOnPath` is a partial port** — see
@@ -487,8 +486,14 @@ not launching a controller for it.
   documented semantics need a walk's own future trajectory, which
   `move_to_node` doesn't expose anywhere yet; the current implementation
   only checks the robot's *current* position.
-- **`MoveTo`'s own trigger vocabulary is a real subset**, not the full
-  one `schema.yaml` documents — see "Not carried over" above.
+- **No mission-configurable trigger vocabulary at all anymore** —
+  `MoveTo`/`InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` only
+  stop early via the always-on battery/collision safety cutoff (see
+  "The `MoveTo` → Nav2 `FollowPath` wrapper" above); a mission tree has
+  no way to make one of them halt on a custom condition
+  (`obstacle_in_bound`, a custom battery threshold, etc.) short of
+  wrapping it in its own `ReactiveSequence`/`ReactiveFallback` guard at
+  the BT.cpp level once that leaf layer is built.
 - **The circle→polygon approximation (`_CIRCLE_POLYGON_SIDES = 16`) is a
   tunable, not exact** — raise it in `planning_core.py` if a future
   scenario needs tighter precision very close to a tree's own canopy edge.
@@ -552,8 +557,8 @@ not launching a controller for it.
   truth), and `PloughedAt`/`PloughedBetween` (conditions, reading a NEW
   `move_to_node.py`-published `ploughed_cells` topic: while a walk
   starts with the plow both hitched AND deployed, `move_to_node`
-  samples the robot's own actual live position at the same cadence it
-  already polls triggers at, and marks each cell — discretized by
+  samples the robot's own actual live position at the same cadence its
+  poll loop already runs at, and marks each cell — discretized by
   `plough_cell_size`, this problem's own `config.yaml` `ploughing.
   cell_size` — as ploughed; `ploughing.py`'s `cell_index`/
   `bresenham_cells` are byte-for-byte ports of `basic_action_theory.pl`'s
