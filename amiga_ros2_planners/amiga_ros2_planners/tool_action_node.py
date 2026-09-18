@@ -103,6 +103,7 @@ from std_msgs.msg import String
 from amiga_interfaces.action import InstallTool, UninstallTool, DeployTool, RetractTool
 from amiga_interfaces.srv import EvaluateCondition, HitchedId, NearestToolOfKind
 from amiga_ros2_planners.pose import PoseProvider
+from amiga_ros2_planners.safety_monitor import SafetyMonitor
 
 _TOOL_KINDS = ("cart", "plow")
 
@@ -175,6 +176,18 @@ class ToolActionNode(Node):
         # tf2 transform. Empty string restores the tf2 lookup.
         self.declare_parameter("pose_topic", "ground_truth/pose")
 
+        # ALWAYS-ON safety cutoff, independent of `triggers` (which is
+        # battery-only and OPTIONAL here anyway -- see this module's own
+        # docstring) -- see safety_monitor.py's own module docstring /
+        # move_to_node.py's own identical params for the full rationale.
+        self.declare_parameter("battery_topic", "battery_state")
+        self.declare_parameter("battery_depleted_threshold_pct", 0.0)
+        self.declare_parameter("contact_topic_front", "chassis/contact_front")
+        self.declare_parameter("contact_topic_back", "chassis/contact_back")
+        self.declare_parameter("contact_topic_left", "chassis/contact_left")
+        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_stale_after_s", 0.5)
+
         self._tool_instances = json.loads(self.get_parameter("tool_instances").value)
 
         # In-memory only -- this node's own lifetime IS the mission's
@@ -194,6 +207,17 @@ class ToolActionNode(Node):
         self._cb_group = ReentrantCallbackGroup()
         self._condition_client = self.create_client(
             EvaluateCondition, "evaluate_condition", callback_group=self._cb_group)
+        self._safety = SafetyMonitor(
+            self,
+            battery_topic=self.get_parameter("battery_topic").value,
+            battery_depleted_threshold_pct=self.get_parameter(
+                "battery_depleted_threshold_pct").value,
+            contact_topic_front=self.get_parameter("contact_topic_front").value,
+            contact_topic_back=self.get_parameter("contact_topic_back").value,
+            contact_topic_left=self.get_parameter("contact_topic_left").value,
+            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
+        )
 
         self._tool_state_pub = self.create_publisher(
             String, self.get_parameter("tool_state_topic").value, _LATCHED_QOS)
@@ -449,6 +473,9 @@ class ToolActionNode(Node):
                     goal_handle.canceled()
                     result.reason, result.status = "canceled", False
                     return result
+                fired_trigger = self._safety.tripped()
+                if fired_trigger is not None:
+                    break
                 if parsed_triggers:
                     fired_trigger = self._check_triggers(parsed_triggers)
                     if fired_trigger is not None:

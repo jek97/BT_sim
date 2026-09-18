@@ -72,6 +72,7 @@ from amiga_interfaces.srv import EvaluateCondition
 from amiga_ros2_planners.bezier import sample_bezier_chain
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
+from amiga_ros2_planners.safety_monitor import SafetyMonitor
 
 # e.g. "battery_below(20)" -> ("battery_below", "20"). Matches the
 # semicolon-separated syntax schema.yaml's own MoveTo.triggers port
@@ -168,6 +169,29 @@ class MoveToNode(Node):
         # different (Cx,Cy) indices between the two.
         self.declare_parameter("plough_cell_size", 1.0)
         self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
+
+        # ALWAYS-ON safety cutoff, independent of `triggers` -- see
+        # safety_monitor.py's own module docstring. Params match
+        # condition_service_node's own battery_topic/contact_topic_*/
+        # contact_stale_after_s names so one launch arg set covers both.
+        self.declare_parameter("battery_topic", "battery_state")
+        self.declare_parameter("battery_depleted_threshold_pct", 0.0)
+        self.declare_parameter("contact_topic_front", "chassis/contact_front")
+        self.declare_parameter("contact_topic_back", "chassis/contact_back")
+        self.declare_parameter("contact_topic_left", "chassis/contact_left")
+        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_stale_after_s", 0.5)
+        self._safety = SafetyMonitor(
+            self,
+            battery_topic=self.get_parameter("battery_topic").value,
+            battery_depleted_threshold_pct=self.get_parameter(
+                "battery_depleted_threshold_pct").value,
+            contact_topic_front=self.get_parameter("contact_topic_front").value,
+            contact_topic_back=self.get_parameter("contact_topic_back").value,
+            contact_topic_left=self.get_parameter("contact_topic_left").value,
+            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
+        )
 
         # local_costmap (which controller_server's FollowPath needs a
         # working state estimate to run against) looks up base_link->odom,
@@ -536,6 +560,15 @@ class MoveToNode(Node):
                     goal_handle.canceled()
                     result.reason, result.status = "canceled", False
                     return result
+                # ALWAYS-ON safety cutoff -- checked every poll regardless
+                # of `triggers`, same cancel-and-report-failure handling
+                # as a fired trigger below (see safety_monitor.py).
+                fired_trigger = self._safety.tripped()
+                if fired_trigger is not None:
+                    cancel_future = follow_path_goal_handle.cancel_goal_async()
+                    self._wait_for_future(cancel_future, timeout_sec=5.0)
+                    self._wait_for_future(get_result_future, timeout_sec=5.0)
+                    break
                 if parsed_triggers:
                     fired_trigger = self._check_triggers(parsed_triggers)
                     if fired_trigger is not None:

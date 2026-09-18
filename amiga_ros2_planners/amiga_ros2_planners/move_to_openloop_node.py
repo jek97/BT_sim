@@ -87,6 +87,7 @@ from amiga_ros2_planners.open_loop_trajectory import (
     build_velocity_segments, integrate_unicycle_step,
 )
 from amiga_ros2_planners.ploughing import cell_index
+from amiga_ros2_planners.safety_monitor import SafetyMonitor
 
 # Same vocabulary/pattern as move_to_node.py's own TRIGGER_PATTERN/
 # TRIGGER_FUNCTOR_TO_CONDITION -- see this module's own docstring for
@@ -130,7 +131,29 @@ class MoveToOpenLoopNode(Node):
         self.declare_parameter("plough_cell_size", 1.0)
         self.declare_parameter("ploughed_cells_topic", "ploughed_cells")
 
+        # ALWAYS-ON safety cutoff, independent of `triggers` -- see
+        # safety_monitor.py's own module docstring / move_to_node.py's
+        # own identical params for the full rationale.
+        self.declare_parameter("battery_topic", "battery_state")
+        self.declare_parameter("battery_depleted_threshold_pct", 0.0)
+        self.declare_parameter("contact_topic_front", "chassis/contact_front")
+        self.declare_parameter("contact_topic_back", "chassis/contact_back")
+        self.declare_parameter("contact_topic_left", "chassis/contact_left")
+        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_stale_after_s", 0.5)
+
         self._cb_group = ReentrantCallbackGroup()
+        self._safety = SafetyMonitor(
+            self,
+            battery_topic=self.get_parameter("battery_topic").value,
+            battery_depleted_threshold_pct=self.get_parameter(
+                "battery_depleted_threshold_pct").value,
+            contact_topic_front=self.get_parameter("contact_topic_front").value,
+            contact_topic_back=self.get_parameter("contact_topic_back").value,
+            contact_topic_left=self.get_parameter("contact_topic_left").value,
+            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
+        )
         self._cmd_vel_pub = self.create_publisher(
             Twist, self.get_parameter("cmd_vel_topic").value, 10)
         self._condition_client = self.create_client(
@@ -306,6 +329,11 @@ class MoveToOpenLoopNode(Node):
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     result.reason, result.status = "canceled", False
+                    return result
+                safety_reason = self._safety.tripped()
+                if safety_reason is not None:
+                    goal_handle.succeed()
+                    result.reason, result.status = safety_reason, False
                     return result
                 if parsed_triggers:
                     fired = self._check_triggers(parsed_triggers)
