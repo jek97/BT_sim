@@ -131,6 +131,11 @@ class ConditionServiceNode(Node):
         self.declare_parameter("tree_obstacle_radius", 0.5)
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("base_frame", "base_link")
+        # "simplified" branch: read the robot's live position straight off
+        # amiga_ros2_gazebo's ground_truth_node.py (Ignition's own
+        # PosePublisher, no EKF in the loop) instead of the map->base_link
+        # tf2 transform. Empty string restores the tf2 lookup.
+        self.declare_parameter("pose_topic", "ground_truth/pose")
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("equal_tolerance_m", 0.1)
         self.declare_parameter("equal_tolerance_pct", 1.0)
@@ -188,6 +193,7 @@ class ConditionServiceNode(Node):
             self,
             self.get_parameter("reference_frame").value,
             self.get_parameter("base_frame").value,
+            pose_topic=self.get_parameter("pose_topic").value,
         )
         self._battery_percent = None
         self.create_subscription(

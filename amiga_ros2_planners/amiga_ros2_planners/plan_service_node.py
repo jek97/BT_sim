@@ -78,6 +78,11 @@ class PlanServiceNode(Node):
         self.declare_parameter("tree_obstacle_radius", 0.5)
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("base_frame", "base_link")
+        # "simplified" branch: read the robot's live position straight off
+        # amiga_ros2_gazebo's ground_truth_node.py (Ignition's own
+        # PosePublisher, no EKF in the loop) instead of the map->base_link
+        # tf2 transform. Empty string restores the tf2 lookup.
+        self.declare_parameter("pose_topic", "ground_truth/pose")
         self.declare_parameter("map_topic", "orchard/occupancy_grid")
         # Identity by default -- see frame_transform.py's own docstring.
         # Set these to align a problog_project mission's own goal points
@@ -123,6 +128,7 @@ class PlanServiceNode(Node):
             self,
             self.get_parameter("reference_frame").value,
             self.get_parameter("base_frame").value,
+            pose_topic=self.get_parameter("pose_topic").value,
         )
 
         self._static_grid = None

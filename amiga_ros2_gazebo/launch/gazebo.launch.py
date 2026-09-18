@@ -192,6 +192,15 @@ def launch_setup(context, *args, **kwargs):
     spacing_x = float(LaunchConfiguration("robot_spacing_x").perform(context))
     spacing_y = float(LaunchConfiguration("robot_spacing_y").perform(context))
     spawn_stagger = float(LaunchConfiguration("robot_spawn_stagger").perform(context))
+    # "simplified" branch: sim_bringup.launch.py forwards its own launch_arm
+    # (which already gates sim_arm.launch.py's whole software stack) down to
+    # here too, so the arm's own ros2_control controllers never get spawned
+    # either -- without this, joint_trajectory_controller/
+    # robotiq_gripper_controller below were spawned unconditionally,
+    # independent of sim_arm.launch.py's inclusion. The arm's mesh/geometry
+    # stays part of the spawned model either way (see namespace_model_sdf /
+    # model.sdf) -- this only stops anything from commanding its joints.
+    launch_arm = LaunchConfiguration("launch_arm").perform(context).lower() == "true"
     use_sim_time = {"use_sim_time": True}
 
     robots = []
@@ -371,12 +380,9 @@ def launch_setup(context, *args, **kwargs):
 
         spawn_jsb = spawner("joint_state_broadcaster", ns)
         spawn_diff = spawner("diff_drive_controller", ns)
-        spawn_jtc = spawner("joint_trajectory_controller", ns)
-        spawn_gripper = spawner("robotiq_gripper_controller", ns)
 
         # Delaying `spawn` delays its whole downstream OnProcessExit chain
-        # (jsb -> diff -> jtc -> gripper) with it — see spawn_delay comment
-        # above for why this exists.
+        # with it — see spawn_delay comment above for why this exists.
         spawn_action = (
             TimerAction(period=robot["spawn_delay"], actions=[spawn])
             if robot["spawn_delay"] > 0
@@ -392,13 +398,24 @@ def launch_setup(context, *args, **kwargs):
             RegisterEventHandler(
                 OnProcessExit(target_action=spawn_jsb, on_exit=[spawn_diff])
             ),
-            RegisterEventHandler(
-                OnProcessExit(target_action=spawn_diff, on_exit=[spawn_jtc])
-            ),
-            RegisterEventHandler(
-                OnProcessExit(target_action=spawn_jtc, on_exit=[spawn_gripper])
-            ),
         ]
+
+        # Arm-only controllers -- chained off spawn_diff same as before,
+        # just skipped entirely when launch_arm is false so nothing ever
+        # claims/commands the arm's joints (jsb/diff above stay unconditional:
+        # those are the base's own drivetrain, needed however the arm is
+        # configured).
+        if launch_arm:
+            spawn_jtc = spawner("joint_trajectory_controller", ns)
+            spawn_gripper = spawner("robotiq_gripper_controller", ns)
+            actions += [
+                RegisterEventHandler(
+                    OnProcessExit(target_action=spawn_diff, on_exit=[spawn_jtc])
+                ),
+                RegisterEventHandler(
+                    OnProcessExit(target_action=spawn_jtc, on_exit=[spawn_gripper])
+                ),
+            ]
 
     # ── gz <-> ROS bridge (raw sim topics; shims re-publish bridge-native) ─
     bridge = Node(
@@ -461,6 +478,17 @@ def generate_launch_description():
                 "robot_spacing_y",
                 default_value="10.0",
                 description="Y offset (meters) added per robot index ",
+            ),
+            DeclareLaunchArgument(
+                "launch_arm",
+                default_value="true",
+                description="Spawn the arm's own ros2_control controllers "
+                "(joint_trajectory_controller, robotiq_gripper_controller). "
+                "False leaves the arm's mesh/geometry part of the spawned "
+                "model (see model.sdf) but nothing ever claims or commands "
+                "its joints -- forwarded here from sim_bringup.launch.py's "
+                "own launch_arm, which already gates sim_arm.launch.py's "
+                "whole software stack (MoveIt, kortex_move, ...).",
             ),
             DeclareLaunchArgument(
                 "robot_spawn_stagger",

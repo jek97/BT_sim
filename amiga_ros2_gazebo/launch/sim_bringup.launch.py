@@ -161,6 +161,16 @@ def launch_setup(context, *args, **kwargs):
     payload_length_included = LaunchConfiguration("payload_length_included")
 
     launch_nav = LaunchConfiguration("launch_nav").perform(context).lower() == "true"
+    # "simplified" branch: the EKF/navsat_transform/wheel_odometry stack
+    # (amiga_localization/launch/bringup.launch.py) stays in the codebase
+    # unchanged but is off by default here, now that planners read
+    # ground_truth/pose directly (see pose.py) instead of the map->base_link
+    # tf2 transform that stack publishes. Independent of launch_nav: Nav2
+    # itself (amiga_navigation/navigation.launch.py) is unaffected by this
+    # flag.
+    launch_localization = (
+        LaunchConfiguration("launch_localization").perform(context).lower() == "true"
+    )
     launch_arm = LaunchConfiguration("launch_arm").perform(context).lower() == "true"
     launch_helpers = (
         LaunchConfiguration("launch_helpers").perform(context).lower() == "true"
@@ -209,6 +219,11 @@ def launch_setup(context, *args, **kwargs):
             headless=headless,
             robot_count=str(robot_count),
             robot_name_prefix=name_prefix,
+            # gazebo.launch.py's own arm-controller spawners (jtc/gripper)
+            # are a separate gating point from sim_arm.launch.py's software
+            # stack below -- both need this same flag so "no node relative
+            # to the arm" actually holds when launch_arm is false.
+            launch_arm=str(launch_arm).lower(),
         ),
         _include(
             "amiga_ros2_gazebo",
@@ -283,7 +298,7 @@ def launch_setup(context, *args, **kwargs):
         ]
 
         # ── Localization + Nav2 ────────────────────────────────────────────
-        if launch_nav:
+        if launch_nav and launch_localization:
             actions.append(
                 _include(
                     "amiga_localization",
@@ -300,6 +315,7 @@ def launch_setup(context, *args, **kwargs):
                     namespace=ns,
                 )
             )
+        if launch_nav:
             actions.append(
                 _include(
                     "amiga_navigation",
@@ -501,6 +517,17 @@ def generate_launch_description():
             DeclareLaunchArgument("use_lidar", default_value="true"),
             DeclareLaunchArgument("use_gps", default_value="true"),
             DeclareLaunchArgument("launch_nav", default_value="true"),
+            DeclareLaunchArgument(
+                "launch_localization",
+                default_value="true",
+                description="Start amiga_localization's dual-EKF/navsat_"
+                "transform/wheel_odometry stack (only takes effect when "
+                "launch_nav is also true). False leaves those node "
+                "definitions untouched in the codebase but starts none of "
+                "them -- for use with amiga_ros2_planners' own "
+                "ground_truth/pose (see pose.py's pose_topic param), which "
+                "needs no map->base_link tf2 transform from this stack.",
+            ),
             DeclareLaunchArgument("launch_arm", default_value="true"),
             DeclareLaunchArgument("launch_rviz", default_value="false"),
             DeclareLaunchArgument(

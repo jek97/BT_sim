@@ -169,6 +169,11 @@ class ToolActionNode(Node):
         self.declare_parameter("install_range", 1.0)
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("base_frame", "base_link")
+        # "simplified" branch: read the robot's live position straight off
+        # amiga_ros2_gazebo's ground_truth_node.py (Ignition's own
+        # PosePublisher, no EKF in the loop) instead of the map->base_link
+        # tf2 transform. Empty string restores the tf2 lookup.
+        self.declare_parameter("pose_topic", "ground_truth/pose")
 
         self._tool_instances = json.loads(self.get_parameter("tool_instances").value)
 
@@ -183,6 +188,7 @@ class ToolActionNode(Node):
             self,
             self.get_parameter("reference_frame").value,
             self.get_parameter("base_frame").value,
+            pose_topic=self.get_parameter("pose_topic").value,
         )
 
         self._cb_group = ReentrantCallbackGroup()

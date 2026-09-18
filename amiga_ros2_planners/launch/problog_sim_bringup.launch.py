@@ -220,6 +220,16 @@ def generate_launch_description():
             launch_agents="false",
             launch_nav="true",
             launch_bt="true",
+            # "simplified" branch: planners read amiga_ros2_gazebo's own
+            # ground_truth/pose directly (see pose.py's pose_topic param),
+            # so the EKF/navsat_transform/wheel_odometry stack this would
+            # otherwise start is left off -- its node definitions are
+            # untouched, just not launched here. The Kinova arm mesh stays
+            # part of the spawned model as a fixed-position visual; nothing
+            # (MoveIt, kortex_move, its own ros2_control controllers) is
+            # launched for it.
+            launch_localization="false",
+            launch_arm="false",
             headless=LaunchConfiguration("headless"),
             mission_schema=mission_schema,
             expect_json=expect_json,

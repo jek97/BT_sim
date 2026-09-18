@@ -399,16 +399,50 @@ sensor model, no noise, no EKF — as `geometry_msgs/PoseStamped` on
 convention is that the robot spawns at Gazebo's own world origin,
 which already IS this sim's map-frame origin).
 
-**Nothing in `amiga_ros2_planners` reads this topic.** Every planner/
-condition here still reads the `map`→`base_link` tf2 transform exactly
-as before — the EKF-fused estimate, not ground truth. This topic exists
-purely so the two can be compared directly (e.g. logging/plotting
-localization error) if that's ever wanted; it changes nothing about how
-this package itself computes or consumes the robot's position. See
-`amiga_ros2_gazebo/scripts/ground_truth_node.py`'s own module docstring
-for the full rationale — like the chassis contact sensors, the exact
-`PosePublisher` SDF syntax is unverified against a live Ignition
+**Every `PoseProvider` that reads `reference_frame` position (`move_to_node`'s
+own `_pose`, `plan_service_node`, `condition_service_node`,
+`tool_action_node`) now reads this topic by default**, via a new
+`pose_topic` ROS param (default `"ground_truth/pose"`) each of those nodes
+declares alongside `reference_frame`/`base_frame` — see `pose.py`. Set
+`pose_topic:=""` on any of them to fall back to the original
+`reference_frame`→`base_frame` tf2 lookup instead. `move_to_node`'s
+SEPARATE `_odom_pose` (gates sending a `FollowPath` goal on
+`odom_frame`→`base_frame` existing) is untouched — that's about
+`diff_drive_controller` having published anything yet, not map-frame
+localization.
+
+The EKF/`navsat_transform_node`/`wheel_odometry_node` stack itself
+(`amiga_localization/launch/bringup.launch.py`) is untouched in the
+codebase but, on this branch, no longer launched by default:
+`sim_bringup.launch.py` gained a `launch_localization` arg (default
+`true`, independent of `launch_nav`) that
+`problog_sim_bringup.launch.py` now sets to `false`. Nav2 itself
+(`amiga_navigation/navigation.launch.py`) is unaffected by this flag —
+only the dual-EKF localization stack is skipped, since planners no
+longer need the `map`→`base_link` transform it published.
+
+See `amiga_ros2_gazebo/scripts/ground_truth_node.py`'s own module
+docstring for the full rationale — like the chassis contact sensors, the
+exact `PosePublisher` SDF syntax is unverified against a live Ignition
 Fortress instance.
+
+## Kinova arm: mesh only, no software stack
+
+`sim_bringup.launch.py`'s `launch_arm` flag now also gates
+`gazebo.launch.py`'s own arm-specific `ros2_control` controller spawners
+(`joint_trajectory_controller`, `robotiq_gripper_controller`) — previously
+those were spawned unconditionally, a separate gating point from
+`sim_arm.launch.py`'s software stack (MoveIt's `move_group`, `kortex_move`'s
+`moveto`, the Kinova-specific `robot_state_publisher`, `joint_state_filter`,
+`sim_segment_leaves_server`). `problog_sim_bringup.launch.py` sets
+`launch_arm:=false`, so for that simulation the arm's mesh/geometry stays
+part of the spawned model (nothing in `model.sdf` changed) but no node
+anywhere claims or commands its joints, no arm MoveIt/kortex_move stack
+starts, and the arm is a fixed-in-place visual. Whether the arm sags under
+gravity with no controller holding it depends on its joints' own
+friction/damping in `model.sdf` — not verified against a live Ignition
+Fortress instance; if it sags, the fix is increasing joint damping there,
+not launching a controller for it.
 
 ## Known limitations / what's next
 

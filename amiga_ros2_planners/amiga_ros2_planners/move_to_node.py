@@ -99,6 +99,13 @@ class MoveToNode(Node):
         self.declare_parameter("reference_frame", "map")
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "base_link")
+        # "simplified" branch: read the robot's live position straight off
+        # amiga_ros2_gazebo's ground_truth_node.py (Ignition's own
+        # PosePublisher, no EKF in the loop) instead of the map->base_link
+        # tf2 transform. Empty string restores the tf2 lookup. Only
+        # _pose (reference_frame) below uses this -- _odom_pose still reads
+        # odom_frame->base_frame off tf2, unrelated to map localization.
+        self.declare_parameter("pose_topic", "ground_truth/pose")
         self.declare_parameter("samples_per_segment", 10)
         # Also bounds how quickly a BT-side cancel (e.g. a ReactiveSequence
         # guard like BatteryOver failing) is even noticed here -- see
@@ -187,6 +194,7 @@ class MoveToNode(Node):
             self,
             self.get_parameter("reference_frame").value,
             self.get_parameter("base_frame").value,
+            pose_topic=self.get_parameter("pose_topic").value,
         )
 
         # Both the FollowPath client and the condition-evaluation calls
