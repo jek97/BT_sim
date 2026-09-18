@@ -134,8 +134,20 @@ def namespace_model_sdf(content: str, ns: str) -> str:
     return content
 
 
-def robot_bridge_args(ns: str) -> list:
+def robot_bridge_args(ns: str, name: str) -> list:
     return [
+        # Ground truth -- Ignition's own PosePublisher system plugin
+        # (amiga_kinova/model.sdf's own "GROUND TRUTH" comment) publishes
+        # this SPECIFIC robot's exact world pose on /model/<name>/pose,
+        # `name` already being globally unique per spawned robot (see
+        # this function's own call site) -- no qualify_gz/qualify_ros
+        # rewriting needed on the Gazebo side, unlike every other sensor
+        # here (those get namespaced by namespace_model_sdf's own
+        # <topic> rewrite before spawn; this one is namespaced by the
+        # spawned ENTITY name instead). ground_truth_node.py (per-robot,
+        # see this file's own per-robot loop) reads this and republishes
+        # it, properly stamped, on the namespaced `ground_truth/pose`.
+        f"/model/{name}/pose@geometry_msgs/msg/Pose[ignition.msgs.Pose",
         f"{qualify_ros(ns, 'navsat')}@sensor_msgs/msg/NavSatFix[ignition.msgs.NavSat",
         f"{qualify_ros(ns, 'chassis/imu')}@sensor_msgs/msg/Imu[ignition.msgs.IMU",
         # oak0 (front)
@@ -338,7 +350,24 @@ def launch_setup(context, *args, **kwargs):
             parameters=[use_sim_time],
         )
 
-        bridge_args += robot_bridge_args(ns)
+        bridge_args += robot_bridge_args(ns, name)
+
+        ground_truth_node = Node(
+            package="amiga_ros2_gazebo",
+            executable="ground_truth_node.py",
+            name="ground_truth_node",
+            namespace=ns,
+            output="screen",
+            parameters=[
+                use_sim_time,
+                {
+                    "input_topic": f"/model/{name}/pose",
+                    "output_topic": qualify_ros(ns, "ground_truth/pose"),
+                    "frame_id": "map",
+                },
+            ],
+        )
+        actions.append(ground_truth_node)
 
         spawn_jsb = spawner("joint_state_broadcaster", ns)
         spawn_diff = spawner("diff_drive_controller", ns)

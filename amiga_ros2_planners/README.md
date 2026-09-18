@@ -388,6 +388,28 @@ own execute callback, a common but not bulletproof rclpy pattern for
 node's own comment on why a `ReentrantCallbackGroup` + per-goal execute
 thread makes it safe here, rather than a genuinely async rewrite).
 
+## Ground truth vs. the EKF-fused pose
+
+`amiga_ros2_gazebo`'s `ground_truth_node.py` (one per spawned robot,
+wired up in `gazebo.launch.py`) publishes the robot's own exact
+simulated pose — straight from Ignition's own `PosePublisher` system
+plugin (`amiga_kinova/model.sdf`'s own "GROUND TRUTH" plugin block), no
+sensor model, no noise, no EKF — as `geometry_msgs/PoseStamped` on
+`ground_truth/pose` (`frame_id: map`, since this project's own
+convention is that the robot spawns at Gazebo's own world origin,
+which already IS this sim's map-frame origin).
+
+**Nothing in `amiga_ros2_planners` reads this topic.** Every planner/
+condition here still reads the `map`→`base_link` tf2 transform exactly
+as before — the EKF-fused estimate, not ground truth. This topic exists
+purely so the two can be compared directly (e.g. logging/plotting
+localization error) if that's ever wanted; it changes nothing about how
+this package itself computes or consumes the robot's position. See
+`amiga_ros2_gazebo/scripts/ground_truth_node.py`'s own module docstring
+for the full rationale — like the chassis contact sensors, the exact
+`PosePublisher` SDF syntax is unverified against a live Ignition
+Fortress instance.
+
 ## Known limitations / what's next
 
 - **The C++ BT.cpp leaves are unbuilt** — see checklist item 2 above.
