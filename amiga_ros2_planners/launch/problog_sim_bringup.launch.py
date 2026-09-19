@@ -68,6 +68,10 @@ def _include(package, launch_file, **launch_args):
 
 
 def generate_launch_description():
+    world = LaunchConfiguration("world")
+    robot1_x = LaunchConfiguration("robot1_x")
+    robot1_y = LaunchConfiguration("robot1_y")
+    robot1_yaw = LaunchConfiguration("robot1_yaw")
     datum_lat = LaunchConfiguration("datum_lat")
     datum_lon = LaunchConfiguration("datum_lon")
     tree_obstacle_radius = LaunchConfiguration("tree_obstacle_radius")
@@ -121,6 +125,32 @@ def generate_launch_description():
     max_angular_speed_rps = LaunchConfiguration("max_angular_speed_rps")
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "world",
+            default_value=os.path.join(
+                get_package_share_directory("amiga_ros2_gazebo"),
+                "worlds", "orchard_nbv.sdf"),
+            description="Forwarded to sim_bringup.launch.py's own arg of "
+            "the same name. run_problog_problem.launch.py overrides this "
+            "with the world matching its own problem_dir's map.yaml "
+            "(see problog_problem.world_for_problem) unless a `world:=` "
+            "is passed explicitly on the command line."),
+        DeclareLaunchArgument(
+            "robot1_x", default_value="-5.0",
+            description="Forwarded to sim_bringup.launch.py's own arg of "
+            "the same name -- its own live-orchard default. "
+            "run_problog_problem.launch.py overrides this with the "
+            "problem's own config.yaml initial_situation.start_x: every "
+            "goal/obstacle coordinate in a problog_project problem "
+            "(behavior_tree.xml's own goal=\"..\" literals, obstacles_"
+            "generated.pl) is already authored directly against this "
+            "sim's own orchard_map_a/b/c frame (config.yaml's own "
+            "comments call this out explicitly -- 'tuned to orchard_map_a's "
+            "real layout'), so the robot has to physically spawn at that "
+            "SAME real start point for them to line up, not at an "
+            "arbitrary fixed spot."),
+        DeclareLaunchArgument("robot1_y", default_value="-3.0"),
+        DeclareLaunchArgument("robot1_yaw", default_value="0.0"),
         DeclareLaunchArgument(
             "datum_lat", default_value="37.3611",
             description="MUST match amiga_localization's own EKF datum "
@@ -215,6 +245,10 @@ def generate_launch_description():
 
         _include(
             "amiga_ros2_gazebo", "sim_bringup.launch.py",
+            world=world,
+            robot1_x=robot1_x,
+            robot1_y=robot1_y,
+            robot1_yaw=robot1_yaw,
             robot_count="1",
             launch_coordination="false",
             launch_agents="false",

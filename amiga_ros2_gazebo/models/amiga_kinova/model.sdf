@@ -1448,32 +1448,23 @@
       <render_engine>ogre</render_engine>
     </plugin> -->
 
-    <!-- GROUND TRUTH: publishes this model's own exact world-frame pose
-         (no noise, no EKF, not derived from any sensor at all) as
-         ignition::msgs::Pose on /model/<spawned-name>/pose —
-         gazebo.launch.py's own robot_bridge_args bridges that into ROS2,
-         and ground_truth_node.py republishes it as a properly-stamped
-         geometry_msgs/PoseStamped on ground_truth/pose. Every publish_*
-         flag left at its own default (false) except use_pose_vector_msg
-         (explicitly false) means this model's own pose ONLY — not
-         links/sensors/collisions/visuals/nested models — as a single
-         Pose message, not a Pose_V vector (a vector would need per-
-         entry name lookup to tell this model's own entry apart from
-         everything else in the world; a single Pose has none of that
-         ambiguity). UNVERIFIED against a live Ignition Fortress
-         instance in this session (no Gazebo runtime available) — same
-         caveat as chassis_contact_*'s own contact sensors elsewhere in
-         this file; smoke-test before relying on it. -->
-    <plugin filename="libignition-gazebo-pose-publisher-system.so"
-            name="ignition::gazebo::systems::PosePublisher">
-      <publish_link_pose>false</publish_link_pose>
-      <publish_sensor_pose>false</publish_sensor_pose>
-      <publish_collision_pose>false</publish_collision_pose>
-      <publish_visual_pose>false</publish_visual_pose>
-      <publish_nested_model_pose>false</publish_nested_model_pose>
-      <use_pose_vector_msg>false</use_pose_vector_msg>
-      <update_frequency>30</update_frequency>
-    </plugin>
+    <!-- GROUND TRUTH: used to be a PosePublisher plugin here, publishing
+         this model's own world-frame pose on /model/<spawned-name>/pose.
+         REMOVED -- confirmed broken by a live smoke test (single-link
+         test model, this exact plugin block, isolated minimal world):
+         with every publish_*_pose flag false (wanting "this model's own
+         pose only"), the plugin advertises its topic but never actually
+         calls Publish() -- zero messages over 6+ seconds despite
+         update_frequency=30. Flipping publish_link_pose true does make
+         it publish, but then floods the SAME topic with every one of
+         this robot's ~20 links' poses (wheels, arm joints, ...) with no
+         name field to filter by (plain ignition.msgs.Pose has no
+         header), unusable for "just this robot's own pose". Ground
+         truth now comes from SceneBroadcaster's own
+         /world/<world>/dynamic_pose/info instead (every world loads
+         that system by default, already confirmed working, and its
+         Pose_V entries DO carry a name -- see ground_truth_node.py's
+         own module docstring and gazebo.launch.py's own bridge_args). -->
     <frame name='camera_module' attached_to='end_effector_link'>
       <pose>0 0.05639 -0.00305 -0 0 3.14159</pose>
     </frame>

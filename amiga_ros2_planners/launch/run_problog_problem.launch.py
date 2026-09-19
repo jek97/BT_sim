@@ -13,11 +13,20 @@ of this):
 
   1. Reads that problem's own config.yaml (problog_problem.load_config)
      and computes:
-       - problog_frame_origin_x/y (problog_problem.compute_frame_origin)
-         -- so the robot, which spawns at this sim's own frame origin,
-         lines up with wherever that problem's own theory assumed it
-         started (config.yaml's initial_situation.start_x/start_y),
-         with NO manual calibration step.
+       - robot1_x/y (config.yaml's own initial_situation.start_x/start_y,
+         taken as-is) -- every goal/obstacle coordinate in a
+         problog_project problem is already authored directly against
+         this sim's own orchard_map_a/b/c frame (see e.g. problem3L's
+         own config.yaml comment: "every PlanWith goal in this tree is a
+         literal coordinate tuned to orchard_map_a's real layout"), so
+         spawning the robot at that SAME real point -- not some fixed,
+         problem-independent spot -- is what actually lines the robot up
+         with where the problem's own theory assumed it started, with NO
+         manual calibration step. problog_frame_origin_x/y/yaw_deg stay
+         identity (0,0,0) accordingly: ProblogFrameTransform
+         (frame_transform.py) exists for a problem authored in a
+         genuinely SEPARATE local frame, which this current crop of
+         problems is not.
        - battery_start_percent/idle_drain_rate_pct_s/
          moving_drain_rate_pct_s (problog_problem.battery_params) --
          so battery_sim_node drains at the SAME rates that problem's
@@ -81,8 +90,37 @@ def launch_setup(context, *args, **kwargs):
     headless = LaunchConfiguration("headless")
     move_to_backend = LaunchConfiguration("move_to_backend")
 
+    world_override = LaunchConfiguration("world").perform(context)
+    worlds_dir = os.path.join(get_package_share_directory("amiga_ros2_gazebo"), "worlds")
+    if world_override:
+        # Explicit `world:=` always wins -- either a bare stem (matched
+        # against worlds_dir, same as the auto-detected case below) or a
+        # full/relative path to a .sdf file (passed straight through).
+        world = (world_override if os.sep in world_override or
+                 world_override.endswith(".sdf")
+                 else os.path.join(worlds_dir, f"{world_override}.sdf"))
+    else:
+        # Auto-detect from this problem's own map.yaml (problog_problem.
+        # world_for_problem) so problem3L opens orchard_map_a, not
+        # problog_sim_bringup.launch.py's own orchard_nbv.sdf default (the
+        # full 144-tree environment) -- see that function's own docstring.
+        # Falls back to the orchard_nbv default if map.yaml is missing/
+        # unrecognized, so a problem folder with no map.yaml behaves
+        # exactly as before this world-selection logic existed.
+        stem = problog_problem.world_for_problem(problem_dir)
+        candidate = os.path.join(worlds_dir, f"{stem}.sdf") if stem else None
+        world = candidate if candidate and os.path.isfile(candidate) else os.path.join(
+            worlds_dir, "orchard_nbv.sdf")
+
     config = problog_problem.load_config(problem_dir)
-    origin_x, origin_y, yaw_deg = problog_problem.compute_frame_origin(config)
+    # Real spawn point, not a frame shift -- see this file's own module
+    # docstring and problog_sim_bringup.launch.py's own robot1_x
+    # description for why: this problem's own goal/obstacle coordinates
+    # are already in this sim's own frame, so the robot needs to
+    # physically start where config.yaml says the theory assumed it did.
+    situation = config.get("initial_situation", {})
+    robot1_x = situation.get("start_x", 0.0)
+    robot1_y = situation.get("start_y", 0.0)
     battery = problog_problem.battery_params(config)
     sample = problog_problem.sample_params(config)
     tool = problog_problem.tool_params(config)
@@ -106,12 +144,15 @@ def launch_setup(context, *args, **kwargs):
                 get_package_share_directory("amiga_ros2_planners"),
                 "launch", "problog_sim_bringup.launch.py")),
         launch_arguments={
+            "world": world,
             "headless": headless,
             "obstacle_source": "problog_problem",
             "problem_dir": problem_dir,
-            "problog_frame_origin_x": str(origin_x),
-            "problog_frame_origin_y": str(origin_y),
-            "problog_frame_yaw_deg": str(yaw_deg),
+            "robot1_x": str(robot1_x),
+            "robot1_y": str(robot1_y),
+            "problog_frame_origin_x": "0.0",
+            "problog_frame_origin_y": "0.0",
+            "problog_frame_yaw_deg": "0.0",
             "battery_start_percent": str(battery["start_percent"]),
             "battery_idle_drain_rate_pct_s": str(battery["idle_drain_rate_pct_s"]),
             "battery_moving_drain_rate_pct_s": str(battery["moving_drain_rate_pct_s"]),
@@ -176,6 +217,15 @@ def generate_launch_description():
             "directory (containing behavior_tree.xml, config.yaml, "
             "obstacles_generated.pl) -- REQUIRED."),
         DeclareLaunchArgument("headless", default_value="false"),
+        DeclareLaunchArgument(
+            "world", default_value="",
+            description="Gazebo world to bring up -- a bare stem among "
+            "amiga_ros2_gazebo/worlds/ (e.g. \"orchard_map_b\") or a full "
+            ".sdf path. Left empty (default), auto-detected from this "
+            "problem's own map.yaml (problog_problem.world_for_problem), "
+            "e.g. problem3L -> orchard_map_a.sdf -- NOT "
+            "problog_sim_bringup.launch.py's own orchard_nbv.sdf default "
+            "(the full 144-tree environment)."),
         DeclareLaunchArgument(
             "move_to_backend", default_value="nav2",
             description="Forwarded to planners.launch.py's own arg of "

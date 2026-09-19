@@ -24,17 +24,26 @@
                rtshader_system block in particular has no Ogre2 equivalent,
                so Ogre2 silently fell back to a default (white/black)
                material instead of erroring. PBR's albedo/normal maps are
-               parsed natively by Ogre2, no script involved, so this also
-               finally re-enables the normal map the old comment above gave
-               up on. -->
+               parsed natively by Ogre2, no script involved -- EXCEPT this
+               project's own ign-gazebo6/ogre2 build renders the PBR metal
+               workflow as solid black regardless of metalness/roughness
+               (confirmed with a minimal isolated world: even a plain,
+               textureless <albedo> metal material with metalness=0
+               renders black; a plain classic ambient/diffuse/specular
+               material next to it renders its real color fine). The
+               classic ambient/diffuse/specular below is the actual
+               fallback this renders with; the pbr/albedo_map/normal_map
+               block stays for renderers where PBR does work (a real
+               GPU-rendered Ignition/Gazebo client, as opposed to this
+               headless --headless-rendering + ogre2 combination) --
+               remove it only once PBR is confirmed working here too. -->
+          <ambient>0.55 0.5 0.42 1</ambient>
+          <diffuse>0.75 0.7 0.6 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
           <pbr>
             <metal>
               <albedo_map>model://house_1/materials/textures/House_1_Diffuse.png</albedo_map>
               <normal_map>model://house_1/materials/textures/House_1_Normal.png</normal_map>
-              <!-- metalness/roughness default to ~1.0/~0.0 (a mirror-like
-                   metal) when unset, which with no environment map to
-                   reflect renders as solid black except for tiny specular
-                   glints. This is a house wall, not metal. -->
               <metalness>0.0</metalness>
               <roughness>0.7</roughness>
             </metal>

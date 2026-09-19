@@ -151,6 +151,10 @@ def launch_setup(context, *args, **kwargs):
     headless = LaunchConfiguration("headless")
     robot_count = int(LaunchConfiguration("robot_count").perform(context))
     name_prefix = LaunchConfiguration("robot_name_prefix").perform(context)
+    robot1_x = LaunchConfiguration("robot1_x")
+    robot1_y = LaunchConfiguration("robot1_y")
+    robot1_z = LaunchConfiguration("robot1_z")
+    robot1_yaw = LaunchConfiguration("robot1_yaw")
     use_lidar = LaunchConfiguration("use_lidar")
     use_gps = LaunchConfiguration("use_gps")
     launch_rviz = LaunchConfiguration("launch_rviz")
@@ -159,6 +163,7 @@ def launch_setup(context, *args, **kwargs):
     mission_schema = LaunchConfiguration("mission_schema")
     expect_json = LaunchConfiguration("expect_json")
     payload_length_included = LaunchConfiguration("payload_length_included")
+    planner_host = LaunchConfiguration("planner_host")
 
     launch_nav = LaunchConfiguration("launch_nav").perform(context).lower() == "true"
     # "simplified" branch: the EKF/navsat_transform/wheel_odometry stack
@@ -219,6 +224,10 @@ def launch_setup(context, *args, **kwargs):
             headless=headless,
             robot_count=str(robot_count),
             robot_name_prefix=name_prefix,
+            robot1_x=robot1_x,
+            robot1_y=robot1_y,
+            robot1_z=robot1_z,
+            robot1_yaw=robot1_yaw,
             # gazebo.launch.py's own arm-controller spawners (jtc/gripper)
             # are a separate gating point from sim_arm.launch.py's software
             # stack below -- both need this same flag so "no node relative
@@ -451,6 +460,7 @@ def launch_setup(context, *args, **kwargs):
                     mission_schema=mission_schema,
                     expect_json=expect_json,
                     payload_length_included=payload_length_included,
+                    planner_host=planner_host,
                 )
             )
 
@@ -519,6 +529,20 @@ def generate_launch_description():
                 description="Name/namespace prefix for robots 2..N, and for "
                 "robot1 too once robot_count>1",
             ),
+            DeclareLaunchArgument(
+                "robot1_x", default_value="-5.0",
+                description="Forwarded to gazebo.launch.py's own arg of the "
+                "same name -- a safe empty spot for the live-orchard world. "
+                "problog_sim_bringup.launch.py overrides this to 0.0 for "
+                "obstacle_source=problog_problem: ProblogFrameTransform "
+                "(frame_transform.py) requires the robot to spawn at this "
+                "sim's own frame origin (0,0) for a problem's own goal/"
+                "obstacle coordinates -- authored in ITS OWN local map "
+                "frame -- to register correctly against where the robot "
+                "actually is."),
+            DeclareLaunchArgument("robot1_y", default_value="-3.0"),
+            DeclareLaunchArgument("robot1_z", default_value="0.05"),
+            DeclareLaunchArgument("robot1_yaw", default_value="0.0"),
             DeclareLaunchArgument("use_lidar", default_value="true"),
             DeclareLaunchArgument("use_gps", default_value="true"),
             DeclareLaunchArgument("launch_nav", default_value="true"),
@@ -563,6 +587,19 @@ def generate_launch_description():
                 "payload_length_included", default_value="true",
                 description="Forwarded to bt.launch.py's own tcp_demux_node "
                 "arg for every robot.",
+            ),
+            DeclareLaunchArgument(
+                "planner_host", default_value="",
+                description="Forwarded to bt.launch.py's own tcp_demux_node "
+                "arg for every robot. Empty (default) here, NOT bt.launch."
+                "py's own default (a real fleet planner's Tailscale IP,  "
+                "100.88.70.65) -- no planner exists inside this "
+                "simulation to register/heartbeat with, so left "
+                "unoverridden tcp_demux_node spends the whole run "
+                "retrying an unreachable connect() every 5s. Empty "
+                "disables planner discovery/registration entirely (see "
+                "tcp_demux_node.cpp's own discovery_loop), the same as a "
+                "dev box feeding it a mission over plain `nc`.",
             ),
             DeclareLaunchArgument(
                 "broken_sampler_robot",

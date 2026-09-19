@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <csignal>
 
 #include <cerrno>
 #include <cstring>
@@ -383,6 +384,18 @@ class TcpDemuxNode : public rclcpp::Node {
 };
 
 int main(int argc, char **argv) {
+  // write_frame()'s own comment already documents a failed ack write as a
+  // log-only, non-fatal condition (the planner just sees "sent,
+  // unacknowledged") -- but that graceful path never ran in practice: a
+  // client (e.g. send_mission) that closes its socket right after sending
+  // the mission, before this node's ::send() of the ack gets to it, raises
+  // SIGPIPE, whose default disposition is to kill the whole process before
+  // send()'s own EPIPE return value is ever seen. Ignoring SIGPIPE process-
+  // wide (rather than passing MSG_NOSIGNAL per call) makes every current
+  // and future ::send() on this socket fail via its ordinary return value
+  // instead, which the existing error handling already expects.
+  std::signal(SIGPIPE, SIG_IGN);
+
   rclcpp::init(argc, argv);
   auto node = std::make_shared<TcpDemuxNode>();
   rclcpp::spin(node);

@@ -15,6 +15,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -399,7 +400,8 @@ def generate_launch_description():
                 "success_probability": LaunchConfiguration("sample_success_probability"),
                 "value_mean": LaunchConfiguration("sample_value_mean"),
                 "value_sigma": LaunchConfiguration("sample_value_sigma"),
-                "value_discretized": LaunchConfiguration("sample_value_discretized"),
+                "value_discretized": ParameterValue(
+                    LaunchConfiguration("sample_value_discretized"), value_type=str),
             }],
         ),
         Node(
@@ -414,7 +416,8 @@ def generate_launch_description():
                 "tool_state_topic": LaunchConfiguration("tool_state_topic"),
                 "tool_activity_topic": LaunchConfiguration("tool_activity_topic"),
                 "tool_deployed_topic": LaunchConfiguration("tool_deployed_topic"),
-                "tool_instances": LaunchConfiguration("tool_instances"),
+                "tool_instances": ParameterValue(
+                    LaunchConfiguration("tool_instances"), value_type=str),
                 "install_range": LaunchConfiguration("install_range"),
                 "install_duration_cart_s": LaunchConfiguration("install_duration_cart_s"),
                 "install_duration_plow_s": LaunchConfiguration("install_duration_plow_s"),

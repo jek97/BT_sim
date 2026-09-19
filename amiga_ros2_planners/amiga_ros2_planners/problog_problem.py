@@ -111,6 +111,37 @@ def load_obstacle_polygons(problem_dir):
             for obstacle_id, outer_points in _parse_obstacle_polygons(text)]
 
 
+def world_for_problem(problem_dir):
+    """The orchard_map_<x> stem (e.g. "orchard_map_a") this problem's own
+    map.yaml says it was authored against -- map.yaml's own `image:`
+    field (e.g. "orchard_map_a.pgm"), stripped of directory and
+    extension. Every problems/<name>/config.yaml only ever says this in
+    PROSE ("on problog6L's own map (orchard_map_a)" and similar); map.yaml
+    is the one place it's actually machine-readable, one per problem
+    (problemNL/M/S all point at orchard_map_a/b/c respectively).
+
+    Used by run_problog_problem.launch.py to pick the matching Gazebo
+    world (worlds/<stem>.sdf) automatically instead of silently falling
+    back to sim_bringup.launch.py's own orchard_nbv.sdf default (the
+    full 144-tree environment, not any one problem's own map) -- a
+    DIFFERENT purpose than this module's other map.yaml/map.pgm
+    exclusion (see module docstring): obstacle rasterization never
+    needed it, Gazebo world selection does.
+
+    Returns None if problem_dir has no map.yaml, or it has no `image:`
+    key -- the caller then keeps whatever default it already had."""
+    path = os.path.join(problem_dir, "map.yaml")
+    try:
+        with open(path) as f:
+            map_cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return None
+    image = map_cfg.get("image")
+    if not image:
+        return None
+    return os.path.splitext(os.path.basename(image))[0]
+
+
 def load_config(problem_dir):
     """The problem's own config.yaml as a plain dict, or {} if it
     doesn't exist."""

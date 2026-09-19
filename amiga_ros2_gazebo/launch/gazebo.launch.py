@@ -136,18 +136,12 @@ def namespace_model_sdf(content: str, ns: str) -> str:
 
 def robot_bridge_args(ns: str, name: str) -> list:
     return [
-        # Ground truth -- Ignition's own PosePublisher system plugin
-        # (amiga_kinova/model.sdf's own "GROUND TRUTH" comment) publishes
-        # this SPECIFIC robot's exact world pose on /model/<name>/pose,
-        # `name` already being globally unique per spawned robot (see
-        # this function's own call site) -- no qualify_gz/qualify_ros
-        # rewriting needed on the Gazebo side, unlike every other sensor
-        # here (those get namespaced by namespace_model_sdf's own
-        # <topic> rewrite before spawn; this one is namespaced by the
-        # spawned ENTITY name instead). ground_truth_node.py (per-robot,
-        # see this file's own per-robot loop) reads this and republishes
-        # it, properly stamped, on the namespaced `ground_truth/pose`.
-        f"/model/{name}/pose@geometry_msgs/msg/Pose[ignition.msgs.Pose",
+        # Ground truth -- see the world-level dynamic_pose/info bridge
+        # added once in launch_setup (NOT here: it's one topic covering
+        # every robot, unlike everything else in this per-robot function).
+        # ground_truth_node.py (per-robot, see this file's own per-robot
+        # loop) reads that and republishes just this robot's own entry,
+        # properly stamped, on the namespaced `ground_truth/pose`.
         f"{qualify_ros(ns, 'navsat')}@sensor_msgs/msg/NavSatFix[ignition.msgs.NavSat",
         f"{qualify_ros(ns, 'chassis/imu')}@sensor_msgs/msg/Imu[ignition.msgs.IMU",
         # oak0 (front)
@@ -240,6 +234,14 @@ def launch_setup(context, *args, **kwargs):
     tmp_world.write(resolve_package_uris(world_content))
     tmp_world.flush()
 
+    # Read directly off the loaded SDF's own <world name=...> rather than
+    # assuming it matches world_path's filename stem -- true for every
+    # orchard_map_*/orchard_nbv world this package ships (see those
+    # files' own header comments), but not guaranteed for a world file
+    # from elsewhere (e.g. the older worlds/orchard.sdf).
+    world_name_match = re.search(r'<world\s+name=["\']([^"\']+)["\']', world_content)
+    world_name = world_name_match.group(1) if world_name_match else "default"
+
     # ── Resolve robot model SDF (shared template, namespaced per instance) ─
     model_path = os.path.join(pkg_gazebo, "models", "amiga_kinova", "model.sdf")
     controllers_yaml = os.path.join(pkg_gazebo, "config", "ros2_controllers_sim.yaml")
@@ -304,7 +306,20 @@ def launch_setup(context, *args, **kwargs):
         )
 
     actions = [gazebo]
-    bridge_args = ["/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock"]
+    bridge_args = [
+        "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
+        # Ground truth for every robot, in one shared world-level stream
+        # (see ground_truth_node.py's own module docstring for why this
+        # replaces the old per-model PosePublisher-plugin bridge: that
+        # plugin never actually published anything with this project's
+        # own publish_*_pose config -- confirmed by a live smoke test,
+        # not assumed). ros_gz_bridge's own Pose_V<->TFMessage conversion
+        # keeps each entity's own name as child_frame_id, letting
+        # ground_truth_node.py (one instance per robot) pick its own
+        # entry out of the shared stream by `entity_name`.
+        f"/world/{world_name}/dynamic_pose/info"
+        "@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V",
+    ]
 
     for robot in robots:
         name = robot["name"]
@@ -376,7 +391,12 @@ def launch_setup(context, *args, **kwargs):
             parameters=[
                 use_sim_time,
                 {
-                    "input_topic": f"/model/{name}/pose",
+                    # World-level, shared by every robot -- NOT qualify_ros'd
+                    # (see the dynamic_pose/info bridge added once in
+                    # bridge_args above); entity_name is what actually picks
+                    # this robot's own entry out of that shared stream.
+                    "input_topic": f"/world/{world_name}/dynamic_pose/info",
+                    "entity_name": name,
                     "output_topic": qualify_ros(ns, "ground_truth/pose"),
                     "frame_id": "map",
                     "child_frame_id": f"{frame_prefix}base_link",
