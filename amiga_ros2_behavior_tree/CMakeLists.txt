@@ -34,6 +34,7 @@ find_package(trajectory_msgs REQUIRED)
 add_executable(bt_runner
   src/bt.cpp
   src/fault_reporter.cpp
+  src/bt_visualization_logger.cpp
   src/xml_validation.cpp
   src/actions/move_to_gps_location.cpp
   src/actions/approach_gps_waypoint.cpp

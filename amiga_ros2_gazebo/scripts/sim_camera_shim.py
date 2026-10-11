@@ -7,12 +7,34 @@ converts Gazebo's 32FC1 metre depth images to the 16UC1 millimetre encoding
 both real drivers publish.
 
 Empty output-topic parameters disable the corresponding stream.
+
+Every inbound Image/PointCloud2 is checked against its own declared
+dimensions (len(data) vs. step*height / row_step*height) before being
+touched or republished, and dropped (logged, not raised) if they don't
+match -- sim_hardware_shims.launch.py's own node docstring documents why:
+an occasional malformed message from the ros_gz bridge's own Gazebo->ROS
+conversion was a confirmed, reproducible SIGSEGV vector here (most likely
+at the DDS/rmw serialization layer, publishing a message whose declared
+width/height/step disagree with its actual buffer length), which killed
+this node (`respawn=True` papers over the crash, it doesn't prevent the
+observation-source gap while respawning) and, via move_to_node's own
+`FollowPath` goal having no Nav2 recovery layer of its own, could stall a
+walk indefinitely. Validating here stops a malformed message before it
+ever reaches that layer, instead of relying on respawn-after-crash.
 """
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+
+
+def _image_buffer_valid(msg: Image) -> bool:
+    return len(msg.data) == msg.step * msg.height
+
+
+def _cloud_buffer_valid(msg: PointCloud2) -> bool:
+    return len(msg.data) == msg.row_step * msg.height
 
 
 class SimCameraShim(Node):
@@ -71,10 +93,24 @@ class SimCameraShim(Node):
             )
 
     def rgb_cb(self, msg: Image):
+        if not _image_buffer_valid(msg):
+            self.get_logger().warn(
+                "sim_camera_shim: dropping malformed rgb Image "
+                f"(len(data)={len(msg.data)}, step*height="
+                f"{msg.step * msg.height}) -- see this module's own "
+                "docstring on why these get validated instead of "
+                "forwarded as-is.", throttle_duration_sec=5.0)
+            return
         msg.header.frame_id = self.rgb_frame
         self.rgb_pub.publish(msg)
 
     def depth_cb(self, msg: Image):
+        if not _image_buffer_valid(msg):
+            self.get_logger().warn(
+                "sim_camera_shim: dropping malformed depth Image "
+                f"(len(data)={len(msg.data)}, step*height="
+                f"{msg.step * msg.height})", throttle_duration_sec=5.0)
+            return
         msg.header.frame_id = self.depth_frame
         if self.depth_to_mm and msg.encoding == "32FC1":
             depth_m = np.frombuffer(msg.data, dtype=np.float32)
@@ -95,6 +131,12 @@ class SimCameraShim(Node):
             self.depth_info_pub.publish(msg)
 
     def points_cb(self, msg: PointCloud2):
+        if not _cloud_buffer_valid(msg):
+            self.get_logger().warn(
+                "sim_camera_shim: dropping malformed PointCloud2 "
+                f"(len(data)={len(msg.data)}, row_step*height="
+                f"{msg.row_step * msg.height})", throttle_duration_sec=5.0)
+            return
         msg.header.frame_id = self.rgb_frame
         self.points_pub.publish(msg)
 

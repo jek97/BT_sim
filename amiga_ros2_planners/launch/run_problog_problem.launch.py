@@ -88,7 +88,6 @@ def launch_setup(context, *args, **kwargs):
     mission_port = LaunchConfiguration("mission_port").perform(context)
     mission_send_timeout = LaunchConfiguration("mission_send_timeout").perform(context)
     headless = LaunchConfiguration("headless")
-    move_to_backend = LaunchConfiguration("move_to_backend")
 
     world_override = LaunchConfiguration("world").perform(context)
     worlds_dir = os.path.join(get_package_share_directory("amiga_ros2_gazebo"), "worlds")
@@ -190,9 +189,12 @@ def launch_setup(context, *args, **kwargs):
             "tool_instances": json.dumps(tool["tool_instances"]),
             "install_range": str(tool["install_range"]),
             "plough_cell_size": str(ploughing["cell_size"]),
-            "move_to_backend": move_to_backend,
             "expect_json": "false",
             "payload_length_included": "false",
+            "launch_localization": LaunchConfiguration("launch_localization"),
+            "visual": LaunchConfiguration("visual"),
+            "video_path": LaunchConfiguration("video_path"),
+            "camera_waypoints_file": LaunchConfiguration("camera_waypoints_file"),
         }.items(),
     )
 
@@ -218,6 +220,15 @@ def generate_launch_description():
             "obstacles_generated.pl) -- REQUIRED."),
         DeclareLaunchArgument("headless", default_value="false"),
         DeclareLaunchArgument(
+            "launch_localization", default_value="false",
+            description="Start amiga_localization's dual-EKF/navsat_"
+            "transform/wheel_odometry stack instead of leaving "
+            "ground_truth_node.py as the map/odom/base_link TF "
+            "authority. Defaults to false -- forwarded straight through "
+            "to problog_sim_bringup.launch.py's own arg of the same "
+            "name, see that file's own description for the full "
+            "picture."),
+        DeclareLaunchArgument(
             "world", default_value="",
             description="Gazebo world to bring up -- a bare stem among "
             "amiga_ros2_gazebo/worlds/ (e.g. \"orchard_map_b\") or a full "
@@ -227,11 +238,6 @@ def generate_launch_description():
             "problog_sim_bringup.launch.py's own orchard_nbv.sdf default "
             "(the full 144-tree environment)."),
         DeclareLaunchArgument(
-            "move_to_backend", default_value="nav2",
-            description="Forwarded to planners.launch.py's own arg of "
-            "the same name -- \"nav2\" (default) or \"openloop\" (see "
-            "move_to_openloop_node.py's own module docstring)."),
-        DeclareLaunchArgument(
             "mission_port", default_value="12346",
             description="Must match bt.launch.py's own tcp_demux_node "
             "port -- sim_bringup.launch.py's own default for robot 1."),
@@ -240,5 +246,21 @@ def generate_launch_description():
             description="How long send_mission keeps retrying the "
             "connection to tcp_demux_node, seconds -- generous, since "
             "Gazebo+Nav2 can take a while to finish coming up."),
+        DeclareLaunchArgument(
+            "visual", default_value="false",
+            description="'false' (default), or the trajectory_camera mode "
+            "to record: 'third_person', 'orbit', or 'custom' (needs "
+            "camera_waypoints_file). Forwarded to "
+            "problog_sim_bringup.launch.py's own arg of the same name."),
+        DeclareLaunchArgument(
+            "video_path", default_value="",
+            description="Required whenever visual is not 'false' -- see "
+            "video_recorder_node.py's own docstring for why there's no "
+            "default."),
+        DeclareLaunchArgument(
+            "camera_waypoints_file", default_value="",
+            description="YAML keyframe file for visual:=custom -- see "
+            "amiga_ros2_gazebo/config/example_camera_waypoints.yaml for a "
+            "worked example."),
         OpaqueFunction(function=launch_setup),
     ])

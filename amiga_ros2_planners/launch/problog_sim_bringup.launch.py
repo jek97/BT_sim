@@ -120,9 +120,9 @@ def generate_launch_description():
     tool_instances = LaunchConfiguration("tool_instances")
     install_range = LaunchConfiguration("install_range")
     plough_cell_size = LaunchConfiguration("plough_cell_size")
-    move_to_backend = LaunchConfiguration("move_to_backend")
-    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
-    max_angular_speed_rps = LaunchConfiguration("max_angular_speed_rps")
+    visual = LaunchConfiguration("visual")
+    video_path = LaunchConfiguration("video_path")
+    camera_waypoints_file = LaunchConfiguration("camera_waypoints_file")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -180,6 +180,21 @@ def generate_launch_description():
             "headless", default_value="false",
             description="Passed straight through to sim_bringup.launch.py."),
         DeclareLaunchArgument(
+            "launch_localization", default_value="false",
+            description="Start amiga_localization's dual-EKF/navsat_"
+            "transform/wheel_odometry stack. Defaults to false (this "
+            "launch file's own long-standing choice, see the _include "
+            "call below) so every planner/condition/MoveTo in this "
+            "package and Nav2's own controller_server/local_costmap "
+            "read the SAME pose: amiga_ros2_gazebo's ground_truth_node.py "
+            "(see sim_bringup.launch.py's own publish_ground_truth_tf, "
+            "tied 1:1 to this flag's negation). Raw sensor topics (IMU/"
+            "GPS/wheel odometry, sim_hardware_shims.launch.py) are NEVER "
+            "gated by this -- only the EKF fusion nodes that would "
+            "otherwise consume them are. Set true to run the real EKF "
+            "stack instead (its own estimate, not ground truth, becomes "
+            "the map/odom/base_link TF authority)."),
+        DeclareLaunchArgument(
             "obstacle_source", default_value="orchard",
             description="\"orchard\" (default) or \"problog_problem\" -- "
             "forwarded to planners.launch.py's own arg of the same name."),
@@ -231,11 +246,21 @@ def generate_launch_description():
             "PloughedAt/PloughedBetween to agree with move_to_node's own "
             "marking."),
         DeclareLaunchArgument(
-            "move_to_backend", default_value="nav2",
-            description="Forwarded to planners.launch.py's own arg of "
-            "the same name -- \"nav2\" (default) or \"openloop\"."),
-        DeclareLaunchArgument("cmd_vel_topic", default_value="cmd_vel"),
-        DeclareLaunchArgument("max_angular_speed_rps", default_value="1.0"),
+            "visual", default_value="false",
+            description="'false' (default), or the trajectory_camera mode "
+            "to record: 'third_person', 'orbit', or 'custom' (needs "
+            "camera_waypoints_file). Forwarded to sim_bringup.launch.py's "
+            "own arg of the same name."),
+        DeclareLaunchArgument(
+            "video_path", default_value="",
+            description="Required whenever visual is not 'false' -- see "
+            "video_recorder_node.py's own docstring for why there's no "
+            "default."),
+        DeclareLaunchArgument(
+            "camera_waypoints_file", default_value="",
+            description="YAML keyframe file for visual:=custom -- see "
+            "amiga_ros2_gazebo/config/example_camera_waypoints.yaml for a "
+            "worked example."),
         DeclareLaunchArgument(
             "expect_json", default_value="true",
             description="Forwarded to sim_bringup.launch.py -- set false "
@@ -256,18 +281,29 @@ def generate_launch_description():
             launch_bt="true",
             # "simplified" branch: planners read amiga_ros2_gazebo's own
             # ground_truth/pose directly (see pose.py's pose_topic param),
-            # so the EKF/navsat_transform/wheel_odometry stack this would
-            # otherwise start is left off -- its node definitions are
-            # untouched, just not launched here. The Kinova arm mesh stays
-            # part of the spawned model as a fixed-position visual; nothing
+            # and -- with launch_localization left at its own default
+            # false -- ground_truth_node.py also owns the map/odom/
+            # base_link TF (see sim_bringup.launch.py's own
+            # publish_ground_truth_tf), so Nav2's controller_server/
+            # local_costmap correct FollowPath against the SAME pose the
+            # BT/planning layer already plans and checks arrival against,
+            # not a separate EKF estimate. See this file's own
+            # launch_localization DeclareLaunchArgument for the full
+            # picture; forwarded here rather than hardcoded so it's a
+            # real, visible/overridable flag from run_problog_problem.
+            # launch.py. The Kinova arm mesh stays part of the spawned
+            # model as a fixed-position visual regardless; nothing
             # (MoveIt, kortex_move, its own ros2_control controllers) is
             # launched for it.
-            launch_localization="false",
+            launch_localization=LaunchConfiguration("launch_localization"),
             launch_arm="false",
             headless=LaunchConfiguration("headless"),
             mission_schema=mission_schema,
             expect_json=expect_json,
             payload_length_included=payload_length_included,
+            visual=visual,
+            video_path=video_path,
+            camera_waypoints_file=camera_waypoints_file,
         ),
         _include(
             "amiga_ros2_planners", "planners.launch.py",
@@ -316,8 +352,5 @@ def generate_launch_description():
             tool_instances=tool_instances,
             install_range=install_range,
             plough_cell_size=plough_cell_size,
-            move_to_backend=move_to_backend,
-            cmd_vel_topic=cmd_vel_topic,
-            max_angular_speed_rps=max_angular_speed_rps,
         ),
     ])

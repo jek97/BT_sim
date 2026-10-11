@@ -41,6 +41,19 @@ folder itself and does everything else on its own:
 - Sends the adapted mission over TCP itself (`send_mission.py`,
   retrying until `tcp_demux_node` is up) — no manual `nc` step.
 
+Add `visual:=<mode> video_path:=/tmp/run.mp4` to record a video of the run (see the top-level
+README's own "Recording a video of the run" for the `third_person`/`orbit`/`custom` modes) —
+forwarded straight through to `sim_bringup.launch.py`:
+
+```bash
+ros2 launch amiga_ros2_planners run_problog_problem.launch.py \
+    problem_dir:=/path/to/BT_project/problems/problem3L \
+    visual:=orbit video_path:=/tmp/problem3L_run.mp4
+```
+
+This also records the behaviour tree's own execution, `BT_problem3L_run.mp4`/`.jsonl` next to
+the camera video — see `bt_visualizer_node.py`'s own module docstring.
+
 What's still not automatic: `HaltedWith` (if the tree uses it) and,
 above all, **the BT.cpp leaves are registered but unbuilt** in this
 session — see "Running a `problog_project` BT in this simulation —
@@ -64,8 +77,7 @@ can't make an unbuilt leaf tick.
 | `amiga_ros2_planners/plan_service_node.py` | new | Hosts `PlanPath.srv` — the ROS2-service form of `PlanWith`, dispatching to `planning_core.py` by `algorithm` (`astar`/`straight`/`voronoi`/`follow_boarder`/`dastar`). Also hosts `PlanPathWaypoints.srv` — the ROS2-service form of `PlanWithWaypoints` (the multi-waypoint generalization of `astar`/`straight`), on a separate `plan_path_waypoints` service. |
 | `amiga_ros2_planners/condition_service_node.py` | new | Hosts `EvaluateCondition.srv` — the ROS2-service form of every `schema.yaml` Condition **except `HaltedWith`** (including `Hitched`/`Deployed`, read from `tool_action_node`'s own latched `tool_state`/`tool_deployed` topics, and `PloughedAt`/`PloughedBetween`, read from `move_to_node`'s own latched `ploughed_cells` topic), plus `CollisionDetected` (this simulation's own addition, no `schema.yaml` counterpart): reads whether `amiga_kinova/model.sdf`'s own `chassis_contact_<front\|back\|left\|right>` Gazebo contact sensors currently report contact — genuine physics collision between the robot's real collision shape and the environment's, not the tf2-vs-tracked-obstacle-list approximation every other condition here uses. |
 | `amiga_ros2_planners/battery_sim_node.py` | new | A simulated battery percentage (this simulation has no real one) so `Battery*` conditions have something to read. |
-| `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls an always-on safety cutoff (`SafetyMonitor`) and cancels early if it trips. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. Selected by `move_to_backend:=nav2` (default) — see `move_to_openloop_node.py`'s row below for the alternative. |
-| `amiga_ros2_planners/move_to_openloop_node.py` | new | Hosts the SAME `MoveTo` action, as a NAV2-FREE alternative backend (`move_to_backend:=openloop`): samples `control_points` the same way, then converts the polyline directly into `cmd_vel` `Twist` commands via a pure feedforward computation (`open_loop_trajectory.py`) — no tf2/odometry read anywhere, ever. Correct only as long as the plan and the real robot stay in agreement; see that node's own module docstring for the full "why open loop, what it costs" rationale. Still polls the same safety cutoff/tool-speed selection/ploughing as `move_to_node.py`, just against its own dead-reckoned position rather than a real tf2 pose. |
+| `amiga_ros2_planners/move_to_node.py` | new | Hosts `MoveTo` (action) — samples `control_points` into a `nav_msgs/Path` and drives it through Nav2's `controller_server` `FollowPath` action; polls an always-on safety cutoff (`SafetyMonitor`) and cancels early if it trips. Also applies this walk's own tool-dependent speed (`tool_speed_*_mps`) as a live `desired_linear_vel` override on `controller_server`, based on `tool_action_node`'s own latched `tool_state` topic. The only `MoveTo` backend — closed-loop against the robot's real tf2 pose. |
 | `amiga_ros2_planners/sample_service_node.py` | new | Hosts `TakeSample.srv` — the ROS2-service form of `TakeSample`: one `random.random() < success_probability` draw, the literal formula `problog_project/module/contracts/bt_actions.py`'s own `bt_take_sample` uses. On success, also draws a VALUE keyed by the tree's own `id="..."` port — either `sample.value.discretized`'s own explicit `{value,weight}` outcome list (a weighted-random pick, takes priority if configured) or the original `sample.value.mean`/`.sigma` discretized Normal over 0-10 — and republishes every id's own value in full on a latched `sample_values` topic (JSON) — `condition_service_node` subscribes to answer `SampleValueBelow`/`Equal`/`Over`. |
 | `amiga_ros2_planners/tool_action_node.py` | new | Hosts `InstallTool`/`UninstallTool`/`DeployTool`/`RetractTool` (actions) — fixed-Duration, no motion, same start/halt/safety-cutoff shape as `MoveTo` minus the trajectory. `tool` names a specific tool INSTANCE id (config.yaml's `tool.instances: [{id,kind,x,y}]`, resolved to a kind here), and `InstallTool` additionally requires the robot be within `install_range` of that instance's own declared position. `DeployTool`/`RetractTool` lower/raise an already-installed tool (currently plow-only) between which `ploughed`-style effects would apply. Tracks the currently-equipped tool's kind ("free"/"cart"/"plow"), which specific instance id, and whether it's deployed, publishing all of it on latched `tool_state`/`tool_activity`/`tool_deployed` topics `move_to_node`/`battery_sim_node` both subscribe to (selecting `tool.equipped.<kind>.deployed_speed`/`.deployed_moving_drain_rate` instead of the regular value while deployed). Also hosts `HitchedId`/`NearestToolOfKind` (`.srv`, INSTANTANEOUS query actions) against this SAME tracked state — no separate lookup mechanism. |
 | `amiga_interfaces/srv/PlanPath.srv`, `EvaluateCondition.srv`, `TakeSample.srv`, `action/MoveTo.action`, `InstallTool.action`, `UninstallTool.action`, `DeployTool.action`, `RetractTool.action` | new | Interfaces for the backends above. |
@@ -469,16 +481,6 @@ not launching a controller for it.
   `PlanWithWaypoints`/`ReactiveFallback` usage several of them actually
   have (no current tree exercises `dastar` itself — it only appears in
   those problems' own generated Prolog plans so far).
-- **`move_to_openloop_node` (the `move_to_backend:=openloop` alternative)
-  is untested against a live `cmd_vel`/`diff_drive_controller`** —
-  `open_loop_trajectory.py`'s own math (segment timing, unicycle
-  integration) is unit-tested and verified in isolation; the
-  publishing/action-server plumbing itself should be smoke-tested
-  before relying on it, same caveat as `move_to_node`'s own
-  `FollowPath` integration above. Being open-loop, it also has NO way
-  to detect or correct real-world drift from the plan — that is the
-  deliberate tradeoff for not needing Nav2/tf2/odometry at all, not a
-  bug to fix.
 - **`HaltedWith` is not implemented anywhere**, and is excluded from
   `xml_validation` entirely.
 - **`ObstacleOnPath` is a partial port** — see

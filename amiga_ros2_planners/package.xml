@@ -41,6 +41,11 @@
        own tool_speed_* effect: see move_to_node.py's own
        _apply_tool_speed. -->
   <depend>rcl_interfaces</depend>
+  <!-- ListControllers - move_to_node's own pre-flight check that
+       diff_drive_controller is actually active before the first
+       FollowPath goal (see _wait_for_diff_drive_active's own
+       docstring). -->
+  <depend>controller_manager_msgs</depend>
 
   <!-- Reads the same tree-info JSON topic orchard_management_node caches
        (see amiga_ros2_behavior_tree/src/orchard_management.cpp): runtime

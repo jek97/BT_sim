@@ -34,14 +34,29 @@
         </material>
 	      		</visual>
 			<!--Collision information of the chassis-->
+			<!-- Sized to chassis_link.obj's OWN real bounding box (checked
+			     directly against the mesh's vertex data, not eyeballed):
+			     local x in [-0.726,0.726], y in [-1.090,1.090], z in
+			     [-0.452,0.508], placed via chassis_link_visual's own pose
+			     (0 0 0.65 0 -0 0) - i.e. this link's real visual footprint
+			     is x in [-0.726,0.726], y in [-1.090,1.090], z in
+			     [0.198,1.158]. The PREVIOUS box here (1.2 x 0.8 x 1.0,
+			     centered z=0.80) was significantly smaller than that in
+			     every dimension (most severely Y: 0.8m vs the real 2.18m
+			     width) - meaning the visible chassis mesh could clip
+			     through a fence/tree by up to ~0.69m on either flank with
+			     NO collision response and NO contact-sensor event at all.
+			     This box (and the 4 bumper slabs below, flush against its
+			     faces) now covers the real mesh footprint with a small
+			     margin, not a tight fit. -->
 			<collision name='chassis_link_collision'>
-				<pose>0 0 0.80 0 -0 0</pose>
+				<pose>0 0 0.68 0 -0 0</pose>
 				<geometry>
-					<box><size>1.2 0.8 1.0</size></box>
+					<box><size>1.5 2.2 1.0</size></box>
 				</geometry>
 			</collision>
 			<!-- Bumper collisions: thin slabs flush against each face of
-			     chassis_link_collision's own box (half-extents 0.6/0.4/0.5m),
+			     chassis_link_collision's own box (half-extents 0.75/1.1/0.5m),
 			     one per side (+x front, -x back, +y left, -y right, REP-103
 			     convention). A single box collision can't tell WHICH face
 			     was hit, so each side needs its own named collision for the
@@ -50,27 +65,27 @@
 			     (they sit flush, not overlapping outward), they only exist
 			     to give the contact sensors something per-side to watch. -->
 			<collision name='chassis_bumper_front_collision'>
-				<pose>0.625 0 0.80 0 -0 0</pose>
+				<pose>0.75 0 0.68 0 -0 0</pose>
 				<geometry>
-					<box><size>0.05 0.8 1.0</size></box>
+					<box><size>0.05 2.2 1.0</size></box>
 				</geometry>
 			</collision>
 			<collision name='chassis_bumper_back_collision'>
-				<pose>-0.625 0 0.80 0 -0 0</pose>
+				<pose>-0.75 0 0.68 0 -0 0</pose>
 				<geometry>
-					<box><size>0.05 0.8 1.0</size></box>
+					<box><size>0.05 2.2 1.0</size></box>
 				</geometry>
 			</collision>
 			<collision name='chassis_bumper_left_collision'>
-				<pose>0 0.425 0.80 0 -0 0</pose>
+				<pose>0 1.1 0.68 0 -0 0</pose>
 				<geometry>
-					<box><size>1.2 0.05 1.0</size></box>
+					<box><size>1.5 0.05 1.0</size></box>
 				</geometry>
 			</collision>
 			<collision name='chassis_bumper_right_collision'>
-				<pose>0 -0.425 0.80 0 -0 0</pose>
+				<pose>0 -1.1 0.68 0 -0 0</pose>
 				<geometry>
-					<box><size>1.2 0.05 1.0</size></box>
+					<box><size>1.5 0.05 1.0</size></box>
 				</geometry>
 			</collision>
 			<!-- Contact sensors: one per bumper collision above, each
@@ -84,37 +99,58 @@
 			     handler for how this gets exposed to a BT tree). Requires
 			     the ignition-gazebo-contact-system world plugin (added to
 			     every world file): the Sensors/Imu/NavSat systems already
-			     loaded there don't process contact sensors on their own. -->
+			     loaded there don't process contact sensors on their own.
+			     The front sensor also watches chassis_link_collision
+			     itself (the main box, not just its flush edge slab) -
+			     belt-and-suspenders for a contact landing close to a
+			     shared bumper/box edge/corner; which of the 4 topics a
+			     central-box-only contact happens to surface on doesn't
+			     matter since SafetyMonitor/CollisionDetected(side="any")
+			     both just OR across all sides anyway. -->
+			<!-- <topic> MUST live inside <contact>, not as a sibling of
+			     it: Ignition's own contact_sensor.sdf example (/usr/
+			     share/ignition/ignition-gazebo6/worlds/contact_sensor.sdf)
+			     puts it there, and a sensor-level <topic> here is
+			     simply ignored by the contact sensor plugin (silently
+			     - no error at load time), leaving it to publish on
+			     gz-sim's own auto-generated scoped topic name instead,
+			     which nothing bridges. This is why NO chassis/wheel
+			     contact topic ever published a single message, empty
+			     or not, in any test all the way back to the very
+			     first report of this - the sensors were never
+			     actually reaching ANY bridged topic, not "reaching it
+			     empty". -->
 			<sensor name="chassis_contact_front" type="contact">
 				<always_on>true</always_on>
 				<update_rate>30</update_rate>
-				<topic>chassis/contact_front</topic>
 				<contact>
 					<collision>chassis_bumper_front_collision</collision>
+					<collision>chassis_link_collision</collision>
+					<topic>chassis/contact_front</topic>
 				</contact>
 			</sensor>
 			<sensor name="chassis_contact_back" type="contact">
 				<always_on>true</always_on>
 				<update_rate>30</update_rate>
-				<topic>chassis/contact_back</topic>
 				<contact>
 					<collision>chassis_bumper_back_collision</collision>
+					<topic>chassis/contact_back</topic>
 				</contact>
 			</sensor>
 			<sensor name="chassis_contact_left" type="contact">
 				<always_on>true</always_on>
 				<update_rate>30</update_rate>
-				<topic>chassis/contact_left</topic>
 				<contact>
 					<collision>chassis_bumper_left_collision</collision>
+					<topic>chassis/contact_left</topic>
 				</contact>
 			</sensor>
 			<sensor name="chassis_contact_right" type="contact">
 				<always_on>true</always_on>
 				<update_rate>30</update_rate>
-				<topic>chassis/contact_right</topic>
 				<contact>
 					<collision>chassis_bumper_right_collision</collision>
+					<topic>chassis/contact_right</topic>
 				</contact>
 			</sensor>
 		    			<!-- CHASSIS IMU (added for EKF heading fusion) -->
@@ -225,6 +261,23 @@
 					<cylinder><radius>0.2159</radius><length>0.21</length></cylinder>
 				</geometry>
 			</collision>
+			<!-- Wheels sit lower than chassis_link_collision's own bottom
+			     face (z down to ~0, vs. the chassis box's z=0.18) and can
+			     be wider than it too on some approach angles - a low
+			     obstacle (fence base rail, curb, tree root) can touch a
+			     wheel with NO chassis/bumper collision box anywhere near
+			     it, and previously had zero contact-sensor coverage at
+			     all. One sensor per wheel, published on its own topic
+			     (see gazebo.launch.py's own robot_bridge_args and
+			     safety_monitor.py's own contact_topics default list). -->
+			<sensor name="wheel_contact_front_right" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<contact>
+					<collision>front_right_wheel_link_collision</collision>
+					<topic>wheel/contact_front_right</topic>
+				</contact>
+			</sensor>
 		    </link>
 
 		    <!--#######  FRONT LEFT WHEEL LINK  #######-->
@@ -264,6 +317,14 @@
 					<cylinder><radius>0.2159</radius><length>0.21</length></cylinder>
 				</geometry>
 			</collision>
+			<sensor name="wheel_contact_front_left" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<contact>
+					<collision>front_left_wheel_link_collision</collision>
+					<topic>wheel/contact_front_left</topic>
+				</contact>
+			</sensor>
 		    </link>
 
  		    <!--#######  REAR RIGHT WHEEL LINK  #######-->
@@ -303,6 +364,14 @@
 					<cylinder><radius>0.2159</radius><length>0.21</length></cylinder>
 				</geometry>
 			</collision>
+			<sensor name="wheel_contact_rear_right" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<contact>
+					<collision>rear_right_wheel_link_collision</collision>
+					<topic>wheel/contact_rear_right</topic>
+				</contact>
+			</sensor>
 		    </link>
 
  		    <!--#######  REAR LEFT WHEEL LINK  #######-->
@@ -342,6 +411,14 @@
 					<cylinder><radius>0.2159</radius><length>0.21</length></cylinder>
 				</geometry>
 			</collision>
+			<sensor name="wheel_contact_rear_left" type="contact">
+				<always_on>true</always_on>
+				<update_rate>30</update_rate>
+				<contact>
+					<collision>rear_left_wheel_link_collision</collision>
+					<topic>wheel/contact_rear_left</topic>
+				</contact>
+			</sensor>
 		    </link>
 
  		    <!--#######  GPS LINK  #######-->

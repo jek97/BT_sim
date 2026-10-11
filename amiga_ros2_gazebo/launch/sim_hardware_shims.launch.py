@@ -112,16 +112,17 @@ def build_shims(ns, imu_topic, imu_frame):
             name="sim_oak0_shim",
             namespace=ns,
             output="screen",
-            # sim_camera_shim.py converts each incoming depth/point cloud
-            # message with no validation that its buffer length actually
-            # matches width*height -- a malformed message is a plausible
-            # native-level (numpy/rmw) crash vector, and this node has been
-            # observed to SIGSEGV mid-run. Without respawn, that silently
-            # and permanently kills local_costmap's own obstacle_layer
+            # sim_camera_shim.py now validates every incoming depth/point
+            # cloud message's buffer length against its own declared
+            # dimensions before touching or republishing it (see that
+            # module's own docstring) -- a malformed message from the
+            # ros_gz bridge's own Gazebo->ROS conversion was a confirmed,
+            # reproducible SIGSEGV vector here, which silently and
+            # permanently killed local_costmap's own obstacle_layer
             # observation source for the rest of the session (see
-            # move_to_node.py's own README/comment on the FollowPath hang
-            # this causes), so auto-restart it instead of leaving the
-            # topic dead until the whole launch is restarted.
+            # move_to_node.py's own comment on the FollowPath hang this
+            # causes). respawn stays on anyway as defense in depth against
+            # whatever else could still take this node down.
             respawn=True,
             respawn_delay=2.0,
             parameters=[

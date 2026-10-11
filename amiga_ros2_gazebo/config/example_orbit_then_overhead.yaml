@@ -1,0 +1,52 @@
+# Example "phases" trajectory for camera_trajectory_node.py's own
+# "custom" mode (sim_bringup.launch.py's visual:=custom), passed via
+# camera_waypoints_file. See camera_trajectory_node.py's _tick_phased
+# docstring for the exact schema.
+#
+# Phase 1: orbit the robot (identical math to visual:=orbit, just capped
+# to one phase of a longer script) until it reports taking its first
+# sample -- amiga_ros2_behavior_tree's own FaultReporter already
+# publishes exactly this event on bt/status_change the moment a
+# TakeSample leaf returns SUCCESS (see fault_reporter.hpp's own
+# docstring), so no bt_runner change was needed to make this fire.
+#
+# Phase 2: fly smoothly (10s, starting from wherever the orbit phase's
+# camera happened to be at that instant -- no jump) to a fixed overhead
+# shot of the WHOLE map, then hold there.
+#
+# That overhead pose's own numbers are tuned for orchard_nbv.sdf
+# specifically (sim_bringup.launch.py's default world) and were derived,
+# not guessed -- retune both if you point this at a different world:
+#
+#   - x, y: orchard_nbv.sdf's own header comment gives its footprint as
+#     x in [5.0, 73.0], y in [-31.5, 31.5] -- center = (39.0, 0.0).
+#   - yaw: 0.0, pitch: 1.5708 (pi/2, straight down). Camera_trajectory_
+#     node.py's own documented orientation convention (identity looks
+#     along +X, positive pitch tilts down) means pitch=pi/2 alone points
+#     the camera straight down with world +X mapped to "up" in the image
+#     and world +Y mapped to "left" -- exactly the requested framing --
+#     with yaw=0 needing no further rotation on top of that. See
+#     camera_trajectory_node.py's own module docstring for the pitch/yaw
+#     sign derivation this relies on.
+#   - z: high enough that BOTH the world-X extent and world-Y extent fit
+#     inside trajectory_camera/model.sdf's own sensor (horizontal_fov=
+#     1.396 rad, 1280x720 -> vertical FOV=0.882 rad), mapped the same way
+#     (X -> vertical FOV, Y -> horizontal FOV). The 68m x 63m bounding
+#     box is trunk CENTERS, not canopy edges, so it's padded +2m per
+#     side first (canopies at this orchard's 4.0m x 9.0m spacing top out
+#     around that radius without overlapping): z =
+#     max(36/tan(vfov/2), 33.5/tan(hfov/2)) = max(76.3, 39.9) = 76.3m,
+#     then +10% margin on top of THAT -> 84m, rounded up further to 95m
+#     -- confirmed live that 83m still let the outermost row's canopies
+#     brush the frame edge (this bounding-box math is an estimate, not
+#     an exact render-time measurement), 95m left a clean margin on
+#     every side.
+phases:
+  - type: orbit
+    radius: 7.0
+    height: 3.0
+    period_s: 30.0
+    until_event: {node: "TakeSample", status: "SUCCESS"}
+  - type: flythrough
+    duration_s: 10.0
+    to: {x: 39.0, y: 0.0, z: 95.0, yaw: 0.0, pitch: 1.5708}

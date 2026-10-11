@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- A free-floating camera with no joints, no arm, no physics tie to the
+     robot - just a single static link carrying a camera sensor. Its pose
+     is set directly, each tick, via the world's own
+     /world/<world>/set_pose service (ros_gz_interfaces/srv/SetEntityPose,
+     bridged in gazebo.launch.py), which every Ignition world already
+     exposes through the ignition-gazebo-user-commands-system plugin -
+     the same mechanism the GUI's own transform-control tool uses to drag
+     models around. Confirmed live: calling that service with this model's
+     name teleports it instantly regardless of <static>, and the sensor's
+     own image topic reflects the new pose on the very next frame - no
+     joints, controllers, or physics needed to move a prop camera. -->
+<sdf version="1.7">
+  <model name="trajectory_camera">
+    <static>true</static>
+    <pose>0 0 3 0 0 0</pose>
+    <link name="camera_link">
+      <!-- Small visible housing so the rig is easy to spot/debug in the
+           GUI - purely cosmetic, not the sensor's own reference frame. -->
+      <visual name="housing_visual">
+        <geometry><box><size>0.15 0.15 0.1</size></box></geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="trajectory_camera_sensor" type="camera">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <visualize>true</visualize>
+        <!-- Relative topic name, matching this file's own sibling
+             sensors' convention (see amiga_kinova/model.sdf's
+             chassis/imu, navsat, etc.) - bridged as-is in
+             gazebo.launch.py, no /model/... prefix needed. -->
+        <topic>trajectory_camera/image</topic>
+        <camera>
+          <!-- ~80 degrees horizontal, a reasonable third-person framing
+               that keeps the robot in shot even with some chase lag. -->
+          <horizontal_fov>1.396</horizontal_fov>
+          <image>
+            <width>1280</width>
+            <height>720</height>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>500</far>
+          </clip>
+        </camera>
+      </sensor>
+    </link>
+  </model>
+</sdf>

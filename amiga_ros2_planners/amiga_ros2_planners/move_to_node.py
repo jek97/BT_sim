@@ -21,6 +21,29 @@ stamped poses), not Bezier control points. So this node:
      (SafetyMonitor -- battery_state/chassis_contact_<side>, see
      safety_monitor.py) and cancels FollowPath the moment it trips.
 
+Before step 2, _rotate_to_initial_heading() checks whether this walk's
+own first Bezier segment departs in a direction that actually matches
+the robot's current heading. planning_core.py's planners only ever see
+start/goal POSITIONS, never the robot's heading, so a walk starting
+right after some earlier, unrelated MoveTo left the robot facing a
+different way departs at whatever angle happens to connect the two
+points -- Nav2's own use_rotate_to_heading only fires on direction
+changes WITHIN a path, never on this kind of goal-to-goal mismatch
+(confirmed empirically via problem7L: zero mismatch at a MoveTo/MoveTo
+boundary, zero wobble there; problem3L's own 90 deg mismatch there,
+wobble there and nowhere else). If the mismatch exceeds
+heading_mismatch_threshold_rad, this node rotates in place (direct
+/cmd_vel Twist -- FollowPath's own goal hasn't been sent yet) before
+ever starting FollowPath.
+
+main()'s own SIGINT handler also cancels any FollowPath goal still in
+flight before rclpy's own shutdown runs (see
+cancel_all_active_follow_path_goals()) -- without that, Ctrl+C mid-walk
+left controller_server's own FollowPath action-server callback with
+nothing having told it to stop, which is what produced the repeating
+"Action callback is still running and missed deadline to stop" during
+shutdown.
+
 This action takes only the input needed to execute the walk
 (control_points) and reports only success/failure (`status`) -- no
 configurable triggers port, no reason string: a BT.cpp leaf calling this
@@ -36,6 +59,8 @@ relying on it.
 """
 import json
 import math
+import signal
+import threading
 import time
 
 import rclpy
@@ -44,18 +69,19 @@ from rclpy.action import ActionServer, ActionClient, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path
 from nav2_msgs.action import FollowPath
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
+from controller_manager_msgs.srv import ListControllers
 from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
-from amiga_ros2_planners.bezier import sample_bezier_chain
+from amiga_ros2_planners.bezier import sample_bezier_chain, cubic_bezier_tangent
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
-from amiga_ros2_planners.safety_monitor import SafetyMonitor
+from amiga_ros2_planners.safety_monitor import SafetyMonitor, DEFAULT_CONTACT_TOPICS
 
 
 class MoveToNode(Node):
@@ -138,24 +164,18 @@ class MoveToNode(Node):
 
         # ALWAYS-ON safety cutoff -- see safety_monitor.py's own module
         # docstring. Params match condition_service_node's own
-        # battery_topic/contact_topic_*/contact_stale_after_s names so
-        # one launch arg set covers both.
+        # battery_topic/contact_stale_after_s names so one launch arg
+        # set covers both.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
-        self.declare_parameter("contact_topic_front", "chassis/contact_front")
-        self.declare_parameter("contact_topic_back", "chassis/contact_back")
-        self.declare_parameter("contact_topic_left", "chassis/contact_left")
-        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_topics", list(DEFAULT_CONTACT_TOPICS))
         self.declare_parameter("contact_stale_after_s", 0.5)
         self._safety = SafetyMonitor(
             self,
             battery_topic=self.get_parameter("battery_topic").value,
             battery_depleted_threshold_pct=self.get_parameter(
                 "battery_depleted_threshold_pct").value,
-            contact_topic_front=self.get_parameter("contact_topic_front").value,
-            contact_topic_back=self.get_parameter("contact_topic_back").value,
-            contact_topic_left=self.get_parameter("contact_topic_left").value,
-            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_topics=self.get_parameter("contact_topics").value,
             contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
         )
 
@@ -167,11 +187,44 @@ class MoveToNode(Node):
         # has no real robot state, and observed behavior is NOT "wait/
         # fail" but a false-positive instant "Reached the goal!" with the
         # robot never actually moving.
+        #
+        # This only confirms the FEEDBACK half of diff_drive_controller is
+        # up (it's already publishing odom) -- NOT the COMMAND half (it's
+        # actually accepting cmd_vel). Those two aren't the same moment:
+        # diff_drive_controller is spawned/activated by its own separate
+        # controller_manager spawner script, entirely independent of (and
+        # not synchronized with) Nav2's own lifecycle_manager activating
+        # controller_server -- confirmed live: controller_server was
+        # already sending real FollowPath/cmd_vel traffic while
+        # diff_drive_controller logged "Can't accept new commands.
+        # subscriber is inactive" for every one of them, the goal then
+        # resolving with no terminal status ever set ("Goal state not
+        # set, assuming aborted"), failing the mission's own first
+        # MoveTo outright. See _wait_for_diff_drive_active's own
+        # docstring for the second half of this guard.
+        #
+        # Created here (rather than down by _follow_path_client below,
+        # where it used to live) because _list_controllers_client just
+        # below needs it already constructed -- it has no dependency of
+        # its own, so moving it earlier is free.
+        self._cb_group = ReentrantCallbackGroup()
         self._odom_pose = PoseProvider(
             self,
             self.get_parameter("odom_frame").value,
             self.get_parameter("base_frame").value,
         )
+        self.declare_parameter(
+            "list_controllers_service", "controller_manager/list_controllers")
+        self.declare_parameter("diff_drive_controller_name", "diff_drive_controller")
+        self._list_controllers_client = self.create_client(
+            ListControllers,
+            self.get_parameter("list_controllers_service").value,
+            callback_group=self._cb_group)
+        # Confirmed once, cached forever after -- once diff_drive_controller
+        # is active it stays active for the rest of the session, so later
+        # walks skip straight past _wait_for_diff_drive_active without a
+        # single service call.
+        self._diff_drive_confirmed_active = False
         # reference_frame pose -- see _mark_ploughed_here below. A
         # SEPARATE PoseProvider from _odom_pose above: that one exists
         # only to gate sending a FollowPath goal (odom_frame->base_frame
@@ -186,6 +239,28 @@ class MoveToNode(Node):
             self.get_parameter("base_frame").value,
             pose_topic=self.get_parameter("pose_topic").value,
         )
+
+        # Pre-rotate-in-place whenever this walk's own first Bezier
+        # segment departs in a direction that doesn't match the robot's
+        # ACTUAL current heading -- see _rotate_to_initial_heading's own
+        # docstring for why this is needed: straight_control_points (and
+        # every other planning_core.py leg planner) only knows the
+        # START/GOAL POSITIONS, never the robot's current heading, so a
+        # walk that starts right after a PREVIOUS, unrelated MoveTo left
+        # the robot facing some other way departs at whatever angle the
+        # straight line to the first waypoint happens to be -- fine when
+        # that happens to line up with how the robot is already facing
+        # (true for the mission's very first walk, off a sim spawn pose
+        # chosen to face the first leg), but a real, uncorrected
+        # heading error otherwise. FollowPath's own
+        # use_rotate_to_heading only fires on IN-PATH direction changes,
+        # never on this kind of goal-to-goal mismatch, so it has to be
+        # handled here instead.
+        self.declare_parameter("heading_mismatch_threshold_rad", math.radians(20.0))
+        self.declare_parameter("rotate_in_place_angular_speed", 0.5)
+        self.declare_parameter("rotate_in_place_tolerance_rad", math.radians(5.0))
+        self.declare_parameter("rotate_in_place_timeout_s", 15.0)
+        self._cmd_vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
 
         # The FollowPath client needs to complete WHILE this action's own
         # execute callback is still running -- a ReentrantCallbackGroup
@@ -211,10 +286,26 @@ class MoveToNode(Node):
         # _wait_for_future() never touches .executor at all -- it just
         # polls, so the externally-owned MultiThreadedExecutor remains
         # the only thing that ever actually spins this node.
-        self._cb_group = ReentrantCallbackGroup()
         self._follow_path_client = ActionClient(
             self, FollowPath, self.get_parameter("follow_path_action").value,
             callback_group=self._cb_group)
+
+        # Every FollowPath goal handle currently in flight (in practice at
+        # most one at a time, but tracked as a list rather than a single
+        # slot in case that ever changes) -- see
+        # cancel_all_active_follow_path_goals()'s own docstring for why
+        # this exists. A plain list, NOT a set -- rclpy's own
+        # ClientGoalHandle defines __eq__ (by goal ID) without defining
+        # __hash__, which makes it unhashable, so adding one to a set
+        # raises TypeError immediately (confirmed live: it crashed
+        # _execute() on literally every walk, aborting the mission before
+        # FollowPath could even be polled). list.remove() uses __eq__,
+        # which this class does support, so a list is both correct and
+        # sufficient here. Guarded by a lock since _execute() runs on a
+        # worker thread (this node's own ReentrantCallbackGroup) while
+        # the SIGINT handler that reads it runs on the main thread.
+        self._active_follow_path_goals = []
+        self._active_follow_path_goals_lock = threading.Lock()
         self._set_params_client = self.create_client(
             SetParameters,
             self.get_parameter("controller_server_set_parameters_service").value,
@@ -346,6 +437,40 @@ class MoveToNode(Node):
             time.sleep(poll_interval_s)
         return True
 
+    def _wait_for_diff_drive_active(self, timeout_sec):
+        """Whether diff_drive_controller's own controller_manager state is
+        "active", confirmed via a real list_controllers call -- NOT
+        inferred from odom already publishing (see the constructor's own
+        comment on _list_controllers_client for why those two are not the
+        same moment). Cached after the first success: once active, it
+        never goes back to not-active for the rest of this process's own
+        lifetime, so every walk after the very first one returns True
+        immediately with zero service calls.
+
+        Polls rather than failing fast on a single rejected/errored
+        call, same spirit as the FollowPath-goal-rejected retry loop in
+        _execute(): list_controllers can legitimately fail (service not
+        up yet) for the same reason odom isn't ready yet -- this is
+        itself part of the SAME startup window, not a separate error."""
+        if self._diff_drive_confirmed_active:
+            return True
+        controller_name = self.get_parameter("diff_drive_controller_name").value
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if self._list_controllers_client.service_is_ready():
+                future = self._list_controllers_client.call_async(
+                    ListControllers.Request())
+                if self._wait_for_future(future, timeout_sec=2.0):
+                    response = future.result()
+                    if response is not None:
+                        for controller in response.controller:
+                            if (controller.name == controller_name
+                                    and controller.state == "active"):
+                                self._diff_drive_confirmed_active = True
+                                return True
+            time.sleep(0.2)
+        return False
+
     def _build_path(self, control_points):
         samples = sample_bezier_chain(
             control_points, self.get_parameter("samples_per_segment").value)
@@ -361,6 +486,90 @@ class MoveToNode(Node):
             pose.pose.orientation.w = math.cos(yaw / 2.0)
             path.poses.append(pose)
         return path
+
+    def _initial_path_heading(self, control_points):
+        """Heading (rad) the chain's own FIRST Bezier segment departs in,
+        from the same analytic tangent sample_bezier_chain/bezier.py
+        itself uses for yaw (t=0 on control_points[0:4]) -- or None for
+        a degenerate zero-length first segment (e.g. the "already there"
+        chain planning_core.py's own planners return when start==goal),
+        which has no meaningful direction to align to."""
+        p0, p1, p2, p3 = control_points[0:4]
+        dx, dy = cubic_bezier_tangent(p0, p1, p2, p3, 0.0)
+        if dx == 0.0 and dy == 0.0:
+            return None
+        return math.atan2(dy, dx)
+
+    def _rotate_to_initial_heading(self, control_points, goal_handle):
+        """Rotates in place, by direct /cmd_vel Twist (this walk's
+        FollowPath goal hasn't been sent yet, so there's no other
+        publisher to conflict with -- see this method's own caller),
+        until the robot's current heading is within
+        rotate_in_place_tolerance_rad of this chain's own first-segment
+        heading, or rotate_in_place_timeout_s elapses. No-ops if the
+        mismatch is already under heading_mismatch_threshold_rad, or if
+        the first segment/current heading isn't meaningful (see
+        _initial_path_heading above, and PoseProvider.get_yaw's own
+        "None until the first pose arrives" case).
+
+        Returns True if the walk should proceed (aligned, skipped, or
+        timed out -- a timeout here falls through to FollowPath rather
+        than aborting the whole walk, since a merely-imperfect heading
+        at the START of a potentially long FollowPath goal is not worth
+        failing the mission over), or False if a cancel was requested
+        while rotating (caller must stop without ever sending FollowPath)."""
+        target_yaw = self._initial_path_heading(control_points)
+        if target_yaw is None:
+            return True
+        if self._pose.get_xy() is None:
+            return True  # no pose yet; _execute()'s own odom-wait already covers this
+        current_yaw = self._pose.get_yaw()
+        if current_yaw is None:
+            return True
+
+        def _angle_diff(a, b):
+            return math.atan2(math.sin(a - b), math.cos(a - b))
+
+        diff = _angle_diff(target_yaw, current_yaw)
+        threshold = self.get_parameter("heading_mismatch_threshold_rad").value
+        if abs(diff) <= threshold:
+            return True
+
+        self.get_logger().info(
+            f"MoveTo: current heading {math.degrees(current_yaw):.1f} deg vs "
+            f"path's own initial heading {math.degrees(target_yaw):.1f} deg "
+            f"(mismatch {math.degrees(diff):.1f} deg) -- rotating in place "
+            "before starting FollowPath")
+
+        angular_speed = self.get_parameter("rotate_in_place_angular_speed").value
+        tolerance = self.get_parameter("rotate_in_place_tolerance_rad").value
+        timeout = self.get_parameter("rotate_in_place_timeout_s").value
+        poll_period = self.get_parameter("poll_period_s").value
+        deadline = time.monotonic() + timeout
+
+        while abs(diff) > tolerance:
+            if goal_handle.is_cancel_requested:
+                self._cmd_vel_pub.publish(Twist())
+                return False
+            if time.monotonic() >= deadline:
+                self.get_logger().warn(
+                    "MoveTo: rotate-in-place timed out before reaching the "
+                    "path's own initial heading, proceeding to FollowPath "
+                    "anyway")
+                break
+            cmd = Twist()
+            cmd.angular.z = math.copysign(angular_speed, diff)
+            self._cmd_vel_pub.publish(cmd)
+            time.sleep(poll_period)
+            if self._pose.get_xy() is None:
+                break
+            current_yaw = self._pose.get_yaw()
+            if current_yaw is None:
+                break
+            diff = _angle_diff(target_yaw, current_yaw)
+
+        self._cmd_vel_pub.publish(Twist())
+        return True
 
     def _execute(self, goal_handle):
         goal = goal_handle.request
@@ -391,6 +600,21 @@ class MoveToNode(Node):
             self.get_logger().error(
                 "move_to_node: no odom pose after startup timeout, aborting")
             goal_handle.abort()
+            result.status = False
+            return result
+
+        # See the constructor's own comment on _list_controllers_client --
+        # a SEPARATE gap from the odom check above.
+        if not self._wait_for_diff_drive_active(timeout_sec=30.0):
+            self.get_logger().error(
+                "move_to_node: diff_drive_controller never reported "
+                "'active' after startup timeout, aborting")
+            goal_handle.abort()
+            result.status = False
+            return result
+
+        if not self._rotate_to_initial_heading(control_points, goal_handle):
+            goal_handle.canceled()
             result.status = False
             return result
 
@@ -431,6 +655,12 @@ class MoveToNode(Node):
                 "FollowPath goal rejected (controller_server likely not "
                 "active yet), retrying...")
             time.sleep(0.5)
+
+        # Tracked from here (accepted) until the finally block below
+        # (whichever way this walk ends) -- see
+        # cancel_all_active_follow_path_goals()'s own docstring.
+        with self._active_follow_path_goals_lock:
+            self._active_follow_path_goals.append(follow_path_goal_handle)
 
         get_result_future = follow_path_goal_handle.get_result_async()
         poll_period = self.get_parameter("poll_period_s").value
@@ -515,6 +745,45 @@ class MoveToNode(Node):
         finally:
             if should_plough:
                 self._mark_ploughed_here()
+            with self._active_follow_path_goals_lock:
+                try:
+                    self._active_follow_path_goals.remove(follow_path_goal_handle)
+                except ValueError:
+                    pass
+
+    def cancel_all_active_follow_path_goals(self):
+        """Fire-and-forget cancel_goal_async() on every FollowPath goal
+        currently tracked as in flight -- called from main()'s own SIGINT
+        handler, BEFORE rclpy's own shutdown sequence tears this node (and
+        its executor) down, so controller_server -- a SEPARATE, still-
+        running process at that exact moment, whether or not it also
+        received the same SIGINT -- gets a chance to actually receive and
+        act on the cancel instead of being left mid-goal with a client
+        that just vanished.
+
+        Deliberately does NOT wait for the cancel to be acknowledged (no
+        _wait_for_future() here): by the time this runs, this node's own
+        executor is at best seconds away from stopping, so there is no
+        guarantee anything will ever spin again long enough to observe
+        the response future resolve. Sending cancel_goal_async() itself
+        still writes the request out over the middleware immediately,
+        independent of whether THIS node's own executor spins again
+        afterward -- that's the one guarantee this leans on. Best-effort,
+        not a substitute for controller_server's own graceful shutdown;
+        it only shortens the window where it's stuck mid-goal with
+        nothing telling it to stop."""
+        with self._active_follow_path_goals_lock:
+            goals = list(self._active_follow_path_goals)
+        for goal_handle in goals:
+            self.get_logger().info(
+                "move_to_node: SIGINT with a FollowPath goal still active "
+                "-- sending cancel before shutdown")
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception as exc:  # noqa: BLE001 -- best-effort, shutting down regardless
+                self.get_logger().warn(
+                    f"move_to_node: cancel_goal_async() on shutdown raised {exc!r}, "
+                    "continuing shutdown anyway")
 
     def _on_follow_path_feedback(self, feedback_msg, goal_handle):
         fb = MoveTo.Feedback()
@@ -527,6 +796,25 @@ def main(args=None):
     node = MoveToNode()
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(node)
+
+    # rclpy.init() above already installed its own SIGINT handler (the
+    # thing that makes executor.spin() below actually return on Ctrl+C) --
+    # this wraps it, rather than replacing it, so that a FollowPath goal
+    # still in flight gets a cancel request sent to controller_server
+    # BEFORE rclpy's own shutdown sequence runs, instead of this node's
+    # executor just stopping mid-goal with nothing having told the
+    # (separate, still-running) controller_server process to stop. See
+    # cancel_all_active_follow_path_goals()'s own docstring for why this
+    # is sent-but-not-awaited, and why that's still useful.
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def _cancel_then_shutdown(signum, frame):
+        node.cancel_all_active_follow_path_goals()
+        if callable(previous_sigint_handler):
+            previous_sigint_handler(signum, frame)
+
+    signal.signal(signal.SIGINT, _cancel_then_shutdown)
+
     try:
         executor.spin()
     finally:

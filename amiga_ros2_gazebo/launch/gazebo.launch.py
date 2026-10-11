@@ -168,6 +168,15 @@ def robot_bridge_args(ns: str, name: str) -> list:
         f"{qualify_ros(ns, 'chassis/contact_back')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
         f"{qualify_ros(ns, 'chassis/contact_left')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
         f"{qualify_ros(ns, 'chassis/contact_right')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        # Wheel contact sensors (model.sdf's own
+        # wheel_contact_{front,rear}_{left,right}) -- the chassis bumpers
+        # above don't reach as low as the wheels do, so a low obstacle
+        # (fence base rail, curb, tree root) needs its own coverage; see
+        # safety_monitor.py's own contact_topics default list.
+        f"{qualify_ros(ns, 'wheel/contact_front_left')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'wheel/contact_front_right')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'wheel/contact_rear_left')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
+        f"{qualify_ros(ns, 'wheel/contact_rear_right')}@ros_gz_interfaces/msg/Contacts[ignition.msgs.Contacts",
     ]
 
 
@@ -196,6 +205,35 @@ def launch_setup(context, *args, **kwargs):
     # model.sdf) -- this only stops anything from commanding its joints.
     launch_arm = LaunchConfiguration("launch_arm").perform(context).lower() == "true"
     use_sim_time = {"use_sim_time": True}
+
+    # visual:= IS the camera mode -- "false" (default) means no camera at
+    # all; "third_person"/"orbit"/"custom" both enable it AND select
+    # camera_trajectory_node.py's own `mode` parameter, one argument doing
+    # both jobs rather than a bool plus a separate mode string. See
+    # trajectory_camera/model.sdf and camera_trajectory_node.py's own
+    # module docstrings for the whole design (a set_pose-teleported
+    # camera, no joints/ros2_control).
+    visual = LaunchConfiguration("visual").perform(context)
+    camera_mode = visual
+    visual_enabled = camera_mode.lower() != "false"
+    video_path = LaunchConfiguration("video_path").perform(context)
+    camera_waypoints_file = LaunchConfiguration("camera_waypoints_file").perform(context)
+    if visual_enabled and camera_mode not in ("third_person", "orbit", "custom"):
+        raise RuntimeError(
+            f"visual:={camera_mode} is not a recognized mode -- expected "
+            "'false', 'third_person', 'orbit', or 'custom'."
+        )
+    if visual_enabled and not video_path:
+        raise RuntimeError(
+            f"visual:={camera_mode} requires video_path (e.g. "
+            "video_path:=/tmp/run.mp4) -- see video_recorder_node.py's own "
+            "docstring for why there's no default."
+        )
+    if camera_mode == "custom" and not camera_waypoints_file:
+        raise RuntimeError(
+            "visual:=custom requires camera_waypoints_file -- see "
+            "config/example_camera_waypoints.yaml for a worked example."
+        )
 
     robots = []
     for i in range(1, robot_count + 1):
@@ -457,6 +495,63 @@ def launch_setup(context, *args, **kwargs):
                 ),
             ]
 
+    # ── Trajectory camera (visual:=third_person/orbit/custom) ─────────────
+    # One camera, shared across however many robots are spawned; tracks
+    # robots[0] in third_person/orbit mode (own trajectory topic name is
+    # chosen further below since it needs that robot's own namespace).
+    if visual_enabled:
+        camera_model_path = os.path.join(
+            pkg_gazebo, "models", "trajectory_camera", "model.sdf"
+        )
+        spawn_camera = Node(
+            package="ros_gz_sim",
+            executable="create",
+            arguments=["-file", camera_model_path, "-name", "trajectory_camera"],
+            output="screen",
+            parameters=[use_sim_time],
+        )
+        actions.append(spawn_camera)
+
+        bridge_args += [
+            f"/world/{world_name}/set_pose@ros_gz_interfaces/srv/SetEntityPose",
+            "trajectory_camera/image@sensor_msgs/msg/Image[ignition.msgs.Image",
+            "trajectory_camera/camera_info@sensor_msgs/msg/CameraInfo"
+            "[ignition.msgs.CameraInfo",
+        ]
+
+        camera_trajectory_params = {
+            "world_name": world_name,
+            "mode": camera_mode,
+        }
+        if camera_mode in ("third_person", "orbit"):
+            # robots[0]'s own ground_truth/pose -- see the per-robot loop
+            # above for where ground_truth_node.py publishes it.
+            camera_trajectory_params["target_pose_topic"] = qualify_ros(
+                robots[0]["ns"], "ground_truth/pose"
+            )
+        elif camera_mode == "custom":
+            camera_trajectory_params["waypoints_file"] = camera_waypoints_file
+
+        actions += [
+            Node(
+                package="amiga_ros2_gazebo",
+                executable="camera_trajectory_node.py",
+                name="camera_trajectory_node",
+                output="screen",
+                parameters=[use_sim_time, camera_trajectory_params],
+            ),
+            Node(
+                package="amiga_ros2_gazebo",
+                executable="video_recorder_node.py",
+                name="video_recorder_node",
+                output="screen",
+                parameters=[
+                    use_sim_time,
+                    {"image_topic": "trajectory_camera/image", "output_path": video_path},
+                ],
+            ),
+        ]
+
     # ── gz <-> ROS bridge (raw sim topics; shims re-publish bridge-native) ─
     bridge = Node(
         package="ros_gz_bridge",
@@ -551,6 +646,35 @@ def generate_launch_description():
                 "pluginlib class-loader race when multiple robots'  "
                 "controller_manager instances load plugins concurrently in "
                 "the same ign gazebo process.",
+            ),
+            DeclareLaunchArgument(
+                "visual",
+                default_value="false",
+                description="'false' (default, no camera at all), or the "
+                "trajectory_camera mode to spawn and record: 'third_person' "
+                "(offset behind/above robots[0], always tracking it), "
+                "'orbit' (circles robots[0] in the horizontal plane, a bit "
+                "further out than third_person, always facing it), or "
+                "'custom' (scripted flythrough, needs "
+                "camera_waypoints_file). Also requires video_path. See "
+                "camera_trajectory_node.py and video_recorder_node.py's own "
+                "module docstrings.",
+            ),
+            DeclareLaunchArgument(
+                "video_path",
+                default_value="",
+                description="Output .mp4 path for the trajectory camera's "
+                "recording. Required (launch fails otherwise) whenever "
+                "visual is not 'false' -- no default, so a recording is "
+                "never lost at a path nobody chose.",
+            ),
+            DeclareLaunchArgument(
+                "camera_waypoints_file",
+                default_value="",
+                description="YAML keyframe file for visual:=custom -- see "
+                "config/example_camera_waypoints.yaml for a worked example "
+                "and camera_trajectory_node.py's _load_custom_waypoints "
+                "docstring for the schema. Ignored in every other mode.",
             ),
             OpaqueFunction(function=launch_setup),
         ]

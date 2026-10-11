@@ -103,6 +103,7 @@ from amiga_ros2_planners.geometry import nearest_obstacle, line_of_sight_clear
 from amiga_ros2_planners.orchard_obstacles import OrchardObstacleStore
 from amiga_ros2_planners.ploughing import bresenham_cells, cell_index
 from amiga_ros2_planners.pose import PoseProvider
+from amiga_ros2_planners.safety_monitor import is_real_contact
 
 # Conditions whose goal_x/goal_y is a point to transform from a
 # problog_project problem's own map frame -- see frame_transform.py's
@@ -119,6 +120,21 @@ _GOAL_FRAME_CONDITIONS = frozenset({
 _P2_FRAME_CONDITIONS = frozenset({"PloughedBetween"})
 
 _CONTACT_SIDES = ("front", "back", "left", "right")
+
+# Wheels sit lower (and can be wider on some approach angles) than the
+# chassis collision box, so they need their own contact-sensor coverage
+# (model.sdf's own wheel_contact_* sensors) -- but they aren't one of
+# the 4 addressable chassis "sides" a mission's own tree can query
+# individually (CollisionDetected side="front"/etc keeps its existing
+# meaning), so they're a SEPARATE bucket that only feeds into
+# side="any" -- see _collision_detected below. See safety_monitor.py's
+# own DEFAULT_CONTACT_TOPICS for the identical list used by the always-
+# on cutoff, which (unlike this per-side query) doesn't distinguish
+# between the two groups at all.
+_WHEEL_CONTACT_TOPICS = (
+    "wheel/contact_front_left", "wheel/contact_front_right",
+    "wheel/contact_rear_left", "wheel/contact_rear_right",
+)
 
 
 class ConditionServiceNode(Node):
@@ -144,6 +160,7 @@ class ConditionServiceNode(Node):
         self.declare_parameter("contact_topic_back", "chassis/contact_back")
         self.declare_parameter("contact_topic_left", "chassis/contact_left")
         self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("wheel_contact_topics", list(_WHEEL_CONTACT_TOPICS))
         self.declare_parameter("contact_stale_after_s", 0.5)
         self.declare_parameter("tool_state_topic", "tool_state")
         self.declare_parameter("tool_deployed_topic", "tool_deployed")
@@ -231,6 +248,16 @@ class ConditionServiceNode(Node):
                 Contacts, self.get_parameter(f"contact_topic_{side}").value,
                 (lambda msg, side=side: self._on_contact(side, msg)), 10)
 
+        # Wheels -- see _WHEEL_CONTACT_TOPICS's own comment above: not an
+        # addressable "side", only ORed into side="any" in
+        # _collision_detected below.
+        wheel_topics = self.get_parameter("wheel_contact_topics").value
+        self._last_wheel_contact_time = {topic: None for topic in wheel_topics}
+        for topic in wheel_topics:
+            self.create_subscription(
+                Contacts, topic,
+                (lambda msg, topic=topic: self._on_wheel_contact(topic, msg)), 10)
+
         # Hitched/Deployed -- tool_action_node's own latched tool_state/
         # tool_deployed topics (see this file's own module docstring).
         # "free"/False are tool_action_node's own initial published
@@ -310,8 +337,12 @@ class ConditionServiceNode(Node):
         self._sample_values = json.loads(msg.data)
 
     def _on_contact(self, side, msg):
-        if msg.contacts:
+        if msg.contacts and is_real_contact(msg):
             self._last_contact_time[side] = self.get_clock().now()
+
+    def _on_wheel_contact(self, topic, msg):
+        if msg.contacts and is_real_contact(msg):
+            self._last_wheel_contact_time[topic] = self.get_clock().now()
 
     def _on_tool_state(self, msg):
         self._equipped_tool = msg.data
@@ -362,6 +393,14 @@ class ConditionServiceNode(Node):
         response.result = any(
             self._last_contact_time[s] is not None and self._last_contact_time[s] > stale_after
             for s in sides)
+        # Wheels have no addressable "side" of their own (see
+        # _WHEEL_CONTACT_TOPICS's own comment) -- side="any" means
+        # "touching anything, anywhere on the robot", so it also checks
+        # them; a specific side="front"/etc query is unaffected.
+        if side == "any" and not response.result:
+            response.result = any(
+                t is not None and t > stale_after
+                for t in self._last_wheel_contact_time.values())
         return response
 
     # -- current pose helper, shared by every position-based condition --

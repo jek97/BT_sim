@@ -20,6 +20,9 @@ install(PROGRAMS
   scripts/sim_camera_shim.py
   scripts/sim_joint_state_filter.py
   scripts/ground_truth_node.py
+  scripts/camera_trajectory_node.py
+  scripts/video_recorder_node.py
+  scripts/bt_visualizer_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

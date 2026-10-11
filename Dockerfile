@@ -21,7 +21,8 @@ RUN apt-get update && apt-get install -y git wget curl python3-full python3-pip 
     ros-${ROS_DISTRO}-diagnostic-updater \
     tmux \
     rhash librhash-dev \
-    byacc flex
+    byacc flex \
+    graphviz
 
 # Upstream regression in the humble build of ros-humble-behaviortree-cpp: it
 # installs libbehaviortree_cpp.so* into the multiarch lib dir

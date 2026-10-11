@@ -1,0 +1,61 @@
+# Example "phases" trajectory for camera_trajectory_node.py's own
+# "custom" mode (sim_bringup.launch.py's visual:=custom), passed via
+# camera_waypoints_file. See camera_trajectory_node.py's _tick_phased
+# docstring for the exact schema.
+#
+# UNLIKE example_orbit_then_overhead.yaml (tuned for orchard_nbv.sdf,
+# which has no fence at all), this one targets orchard_map_a.sdf --
+# run_problog_problem.launch.py's own problem3L auto-selects that world
+# already (problog_problem.world_for_problem), so no world:= override is
+# needed for that problem specifically.
+#
+# Motion:
+#   1. orbit the robot until it reports taking its first sample
+#      (identical trigger to example_orbit_then_overhead.yaml -- see
+#      that file's own header for why no bt_runner change was needed).
+#   2. climb straight up for 5s, staying centered on and looking at the
+#      robot the whole time (it shrinks in frame, but never leaves
+#      center) -- see the "climb" phase type's own docstring in
+#      _tick_phased for why this is its own phase and not just a
+#      flythrough with a fixed high pose.
+#   3. fly the remaining 5s to a fixed pose over the CENTER OF THE
+#      FENCED PERIMETER (not the robot, not the tree footprint -- may
+#      well be a different point from both), ending with the whole
+#      fenced rectangle inside frame, then hold.
+#
+# That final pose's own numbers were derived, not guessed, and are
+# specific to orchard_map_a.sdf's own fence:
+#
+#   - x, y: orchard_map_a.sdf's own "Orchard perimeter fence" panels
+#     (searched directly, not taken from a header comment) place the
+#     four fence lines at world x=-4.0 (west), x=50.0 (east), y=-49.5
+#     (south), y=49.5 (north) -- matching that world's own "9m out from
+#     the outermost trees" comment against its footprint x[5,41]
+#     y[-40.5,40.5]. Center of that rectangle = (23.0, 0.0).
+#   - yaw: 0.0, pitch: 1.5708 (pi/2, straight down) -- same derivation as
+#     example_orbit_then_overhead.yaml's own header comment: this
+#     orientation alone maps world +X to "up" in the image and world +Y
+#     to "left", no additional rotation needed.
+#   - z: high enough that BOTH the fence rectangle's 54m world-X extent
+#     (-> image vertical FOV) and 99m world-Y extent (-> image
+#     horizontal FOV) fit inside trajectory_camera/model.sdf's own
+#     sensor (horizontal_fov=1.396 rad, 1280x720 -> vertical FOV=0.882
+#     rad), first padded +2m/side for corner-post/panel-overhang slop:
+#     z = max(58/tan(vfov/2), 103/tan(hfov/2)) = max(61.5, 61.4) =
+#     61.5m, then +10% -> 67.6m -- rounded up further to 80m for the
+#     same reason example_orbit_then_overhead.yaml's own z ended up
+#     needing more margin than its first-pass math suggested (this
+#     bounding-box estimate isn't an exact render-time measurement).
+#     Retune x/y/z entirely for any other world's own fence layout.
+phases:
+  - type: orbit
+    radius: 7.0
+    height: 3.0
+    period_s: 30.0
+    until_event: {node: "TakeSample", status: "SUCCESS"}
+  - type: climb
+    duration_s: 5.0
+    target_height: 30.0
+  - type: flythrough
+    duration_s: 5.0
+    to: {x: 23.0, y: 0.0, z: 80.0, yaw: 0.0, pitch: 1.5708}

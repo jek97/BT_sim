@@ -286,3 +286,58 @@ ros2 launch amiga_ros2_gazebo sim_bringup.launch.py headless:=true
 
 Stacks can be toggled off with `launch_nav:=false`, `launch_arm:=false`, `launch_bt:=false`, or
 `launch_helpers:=false`, and a different world with `world:=/path/to/world.sdf`.
+
+### Recording a video of the run
+
+`visual:=<mode>` spawns a camera in the world and records its feed to `video_path` (an .mp4).
+`<mode>` is one of:
+- `third_person` — offset behind/above the robot, always turned to look at it.
+- `orbit` — circles the robot in the horizontal plane, a bit further out than `third_person`,
+  always facing it.
+- `custom` — a scripted trajectory from a YAML file (`camera_waypoints_file`), in one of two
+  dialects (see `camera_trajectory_node.py`'s own docstring for the exact schemas):
+  - flat `keyframes` — interpolates through a list of timed (x, y, z, yaw, pitch) points;
+    `amiga_ros2_gazebo/config/example_camera_waypoints.yaml` is a worked example.
+  - `phases` — an ordered list of phases: "orbit" (like `orbit` mode, but can end on a named
+    behaviour-tree event instead of running forever), "climb" (rises straight up while staying
+    centered on and looking at the tracked robot), or "flythrough" (a timed, continuous move to
+    a fixed pose, starting from wherever the camera already is). Two worked examples, both
+    orbiting the robot until it takes its first sample, then climbing while staying centered on
+    it, then flying the rest of the way to a fixed overhead shot:
+    - `amiga_ros2_gazebo/config/example_orbit_then_overhead.yaml` — of the whole map
+      (orchard_nbv.sdf).
+    - `amiga_ros2_gazebo/config/example_orbit_then_fence_overhead.yaml` — of the whole fenced
+      perimeter, centered on the fence rectangle itself, not the map or the robot
+      (orchard_map_a.sdf, e.g. `problem3L`).
+
+```bash
+# Third-person chase cam
+ros2 launch amiga_ros2_gazebo sim_bringup.launch.py \
+    visual:=third_person video_path:=/tmp/run.mp4
+
+# Orbiting cam
+ros2 launch amiga_ros2_gazebo sim_bringup.launch.py \
+    visual:=orbit video_path:=/tmp/run.mp4
+
+# Scripted flythrough (flat keyframes)
+ros2 launch amiga_ros2_gazebo sim_bringup.launch.py \
+    visual:=custom video_path:=/tmp/run.mp4 \
+    camera_waypoints_file:=amiga_ros2_gazebo/config/example_camera_waypoints.yaml
+
+# Scripted trajectory (phases): orbit until the first sample, then overhead
+ros2 launch amiga_ros2_gazebo sim_bringup.launch.py \
+    visual:=custom video_path:=/tmp/run.mp4 \
+    camera_waypoints_file:=amiga_ros2_gazebo/config/example_orbit_then_overhead.yaml
+
+# Same, but ending on the fenced perimeter instead (needs a world with a fence, e.g. problem3L's)
+ros2 launch amiga_ros2_planners run_problog_problem.launch.py \
+    problem_dir:=/path/to/BT_project/problems/problem3L \
+    visual:=custom video_path:=/tmp/run.mp4 \
+    camera_waypoints_file:=amiga_ros2_gazebo/config/example_orbit_then_fence_overhead.yaml
+```
+
+`video_path` is required whenever `visual` is not `false` (the default) — there's no fallback
+path, so a recording is never silently lost. Whenever a camera is recording, the behaviour
+tree's own execution is recorded too: `BT_<name>.mp4` next to the camera video (the tree, live,
+colored by each node's status) and `BT_<name>.jsonl` (every status-change event, so the same
+video can be rebuilt later with no simulation running at all — see `bt_visualizer_node.py --replay`).

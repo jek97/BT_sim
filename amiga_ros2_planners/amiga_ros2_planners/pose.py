@@ -30,10 +30,20 @@ PoseProvider so a namespaced robot can override them exactly like every
 other frame-name parameter in this repo (see
 amiga_ros2_gazebo/launch/sim_bringup.launch.py's own frame_prefix note).
 """
+import math
+
 import rclpy
 from tf2_ros import Buffer, TransformListener, LookupException, \
     ConnectivityException, ExtrapolationException
 from geometry_msgs.msg import PoseStamped
+
+
+def _yaw_from_quaternion(q):
+    """Planar yaw from a geometry_msgs/Quaternion -- the same roll/pitch
+    -negligible assumption every other yaw in this package already
+    makes (see bezier.py's/move_to_node.py's own orientation.z/w
+    construction, 2D orchard-floor robot)."""
+    return 2.0 * math.atan2(q.z, q.w)
 
 
 class PoseProvider:
@@ -43,6 +53,7 @@ class PoseProvider:
         self._reference_frame = reference_frame
         self._base_frame = base_frame
         self._xy = None
+        self._yaw = None
         if pose_topic:
             self._buffer = None
             self._listener = None
@@ -54,10 +65,14 @@ class PoseProvider:
 
     def _on_pose(self, msg: PoseStamped):
         self._xy = (msg.pose.position.x, msg.pose.position.y)
+        self._yaw = _yaw_from_quaternion(msg.pose.orientation)
 
     def get_xy(self):
         """(x, y) in `reference_frame`, or None if no pose is available
-        yet (e.g. localization/ground truth hasn't published one)."""
+        yet (e.g. localization/ground truth hasn't published one). Also
+        refreshes get_yaw()'s own cached value as a side effect (both
+        come from the same underlying pose sample) -- call this before
+        get_yaw() if you need them in sync."""
         if self._buffer is None:
             return self._xy
         try:
@@ -66,7 +81,15 @@ class PoseProvider:
         except (LookupException, ConnectivityException, ExtrapolationException):
             return None
         t = transform.transform.translation
+        self._yaw = _yaw_from_quaternion(transform.transform.rotation)
         return t.x, t.y
+
+    def get_yaw(self):
+        """Planar yaw (rad) as of the last successful get_xy() call, or
+        None if get_xy() has never succeeded. Does NOT itself refresh
+        the pose -- call get_xy() first if you need the current yaw,
+        not whatever was last cached."""
+        return self._yaw
 
     def wait_ready(self, timeout_sec=30.0):
         """Spin this provider's own node until get_xy() first succeeds,

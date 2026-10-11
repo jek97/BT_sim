@@ -181,6 +181,22 @@ def launch_setup(context, *args, **kwargs):
         LaunchConfiguration("launch_helpers").perform(context).lower() == "true"
     )
     launch_bt = LaunchConfiguration("launch_bt").perform(context).lower() == "true"
+    # visual:= IS the camera mode ('false'/'third_person'/'orbit'/
+    # 'custom') -- see gazebo.launch.py's own visual argument description.
+    visual = LaunchConfiguration("visual").perform(context)
+    visual_enabled = visual.lower() != "false"
+    video_path = LaunchConfiguration("video_path").perform(context)
+    # "BT_" + the camera video's own filename, next to it -- exactly the
+    # naming asked for. Only ever read when visual is enabled, at which
+    # point gazebo.launch.py has already required video_path to be
+    # non-empty.
+    bt_video_path = ""
+    bt_bag_path = ""
+    if visual_enabled:
+        video_dir = os.path.dirname(video_path)
+        stem, _ext = os.path.splitext(os.path.basename(video_path))
+        bt_video_path = os.path.join(video_dir, f"BT_{stem}.mp4")
+        bt_bag_path = os.path.join(video_dir, f"BT_{stem}.jsonl")
     launch_coordination = (
         LaunchConfiguration("launch_coordination").perform(context).lower() == "true"
     )
@@ -238,6 +254,14 @@ def launch_setup(context, *args, **kwargs):
             # authorities for the same child frame -- never launch both.
             # True exactly when launch_localization is false.
             publish_ground_truth_tf=str(not launch_localization).lower(),
+            # Trajectory camera + video recording -- see gazebo.launch.py's
+            # own visual/video_path/camera_waypoints_file
+            # DeclareLaunchArgument descriptions for what each one does.
+            visual=visual,
+            video_path=video_path,
+            camera_waypoints_file=LaunchConfiguration(
+                "camera_waypoints_file"
+            ).perform(context),
         ),
         _include(
             "amiga_ros2_gazebo",
@@ -414,6 +438,16 @@ def launch_setup(context, *args, **kwargs):
                             "max_angular_velocity": 0.7,
                             "yaw_offset": yaw_offset,
                             "odom_topic": qualify_ros(ns, "odometry/filtered/local"),
+                            # Same diagnostic directory as navigation.launch.py's
+                            # own cmd_vel_fanin_logger.py, so every candidate
+                            # /cmd_vel source's log ends up in one place -- see
+                            # linear_velo.cpp's own log_and_publish().
+                            "cmd_vel_log_path": os.path.join(
+                                os.environ.get(
+                                    "CMD_VEL_DIAG_DIR", "/tmp/cmd_vel_diag"
+                                ),
+                                "cmd_vel_log_linear_velo.log",
+                            ),
                         }
                     ],
                     # /cmd_vel: hardcoded absolute publisher, no param.
@@ -461,8 +495,39 @@ def launch_setup(context, *args, **kwargs):
                     expect_json=expect_json,
                     payload_length_included=payload_length_included,
                     planner_host=planner_host,
+                    # Cheap enough (one String publish per status
+                    # transition, not per tick) to just tie straight to
+                    # visual -- see bt_visualization_logger.hpp's own
+                    # docstring for why this can't slow the tree down even
+                    # when on.
+                    bt_visualization=str(visual_enabled).lower(),
                 )
             )
+            # Only robot1's tree -- same simplification as
+            # camera_trajectory_node.py's own third_person/orbit modes
+            # always tracking robots[0], and for the same reason: one
+            # video, one target.
+            if visual_enabled and i == 1:
+                actions.append(
+                    Node(
+                        package="amiga_ros2_gazebo",
+                        executable="bt_visualizer_node.py",
+                        name="bt_visualizer_node",
+                        namespace=ns,
+                        output="screen",
+                        parameters=[
+                            {
+                                # Relative, resolved by this Node's own
+                                # namespace=ns below -- same convention
+                                # bt.launch.py's own topics use (see its
+                                # module docstring).
+                                "viz_topic": "bt/visualization",
+                                "video_path": bt_video_path,
+                                "bag_path": bt_bag_path,
+                            }
+                        ],
+                    )
+                )
 
         # ── Robot-to-robot coordination ────────────────────────────────────
         # The device name is always amiga<i>, independent of ns -- robot1's
@@ -517,6 +582,37 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument(
+                "visual",
+                default_value="false",
+                description="'false' (default, no camera), or the "
+                "trajectory_camera mode to record: 'third_person' (tracks "
+                "robot1 from behind/above), 'orbit' (circles robot1 in the "
+                "horizontal plane, further out than third_person), or "
+                "'custom' (scripted flythrough, needs "
+                "camera_waypoints_file). Also requires video_path. "
+                "Forwarded to gazebo.launch.py's own arg of the same name; "
+                "see that file and camera_trajectory_node.py's own "
+                "docstrings for the design and also drives whether "
+                "bt_runner publishes bt/visualization for "
+                "bt_visualizer_node.py to record.",
+            ),
+            DeclareLaunchArgument(
+                "video_path",
+                default_value="",
+                description="Output .mp4 path for the trajectory camera's "
+                "recording -- required whenever visual is not 'false', no "
+                "default. A BT_<name>.mp4/.jsonl pair records the "
+                "behaviour tree's own execution next to it. Forwarded to "
+                "gazebo.launch.py.",
+            ),
+            DeclareLaunchArgument(
+                "camera_waypoints_file",
+                default_value="",
+                description="YAML keyframe file for visual:=custom -- see "
+                "config/example_camera_waypoints.yaml for a worked example. "
+                "Forwarded to gazebo.launch.py.",
+            ),
+            DeclareLaunchArgument(
                 "robot_count",
                 default_value="1",
                 description="How many identical robots to bring up (see "
@@ -561,8 +657,15 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_rviz", default_value="false"),
             DeclareLaunchArgument(
                 "launch_helpers",
-                default_value="true",
-                description="Start waypoint_follower + linear_velo (as in tmux bringup)",
+                default_value="false",
+                description="Start amiga_waypoint_follower + linear_velo + "
+                "lidar_object_navigator (as in tmux bringup). None of these "
+                "publish sensor data and none are called anywhere in the "
+                "problog_project BT missions -- move_to_node talks to Nav2's "
+                "controller_server directly. Default off so they can't end "
+                "up independently commanding /cmd_vel during a mission; flip "
+                "to true only for the GPS-waypoint/tree-approach workflows "
+                "that actually use them.",
             ),
             DeclareLaunchArgument("launch_bt", default_value="true"),
             DeclareLaunchArgument(

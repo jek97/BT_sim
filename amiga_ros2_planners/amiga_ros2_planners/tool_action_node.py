@@ -104,7 +104,7 @@ from std_msgs.msg import String
 from amiga_interfaces.action import InstallTool, UninstallTool, DeployTool, RetractTool
 from amiga_interfaces.srv import HitchedId, NearestToolOfKind
 from amiga_ros2_planners.pose import PoseProvider
-from amiga_ros2_planners.safety_monitor import SafetyMonitor
+from amiga_ros2_planners.safety_monitor import SafetyMonitor, DEFAULT_CONTACT_TOPICS
 
 _TOOL_KINDS = ("cart", "plow")
 
@@ -167,10 +167,7 @@ class ToolActionNode(Node):
         # full rationale.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
-        self.declare_parameter("contact_topic_front", "chassis/contact_front")
-        self.declare_parameter("contact_topic_back", "chassis/contact_back")
-        self.declare_parameter("contact_topic_left", "chassis/contact_left")
-        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_topics", list(DEFAULT_CONTACT_TOPICS))
         self.declare_parameter("contact_stale_after_s", 0.5)
 
         self._tool_instances = json.loads(self.get_parameter("tool_instances").value)
@@ -195,10 +192,7 @@ class ToolActionNode(Node):
             battery_topic=self.get_parameter("battery_topic").value,
             battery_depleted_threshold_pct=self.get_parameter(
                 "battery_depleted_threshold_pct").value,
-            contact_topic_front=self.get_parameter("contact_topic_front").value,
-            contact_topic_back=self.get_parameter("contact_topic_back").value,
-            contact_topic_left=self.get_parameter("contact_topic_left").value,
-            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_topics=self.get_parameter("contact_topics").value,
             contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
         )
 

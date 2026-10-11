@@ -118,6 +118,21 @@ def generate_launch_description():
                 "catalyst for the whole replanning and coordination pipeline.",
             ),
             DeclareLaunchArgument(
+                "bt_visualization",
+                default_value="true",
+                description="Publish this tree's structure and every node's "
+                "status transitions on bt_visualization_topic -- "
+                "bt_visualizer_node.py (amiga_ros2_gazebo) is what actually "
+                "turns that into a video/bag file when visual:=true; this "
+                "flag just controls whether bt_runner bothers publishing at "
+                "all.",
+            ),
+            DeclareLaunchArgument(
+                "bt_visualization_topic",
+                default_value="bt/visualization",
+                description="See bt_visualization's own description.",
+            ),
+            DeclareLaunchArgument(
                 "x_offset",
                 default_value="0.0",
                 description="Offset in meters to add to longitude (east/west)",
@@ -139,6 +154,12 @@ def generate_launch_description():
                         "fault_topic": LaunchConfiguration("fault_topic"),
                         "xml_validation": LaunchConfiguration("xml_validation"),
                         "mission_schema": LaunchConfiguration("mission_schema"),
+                        "bt_visualization": ParameterValue(
+                            LaunchConfiguration("bt_visualization"), value_type=bool
+                        ),
+                        "bt_visualization_topic": LaunchConfiguration(
+                            "bt_visualization_topic"
+                        ),
                     }
                 ],
             ),

@@ -1,9 +1,30 @@
 <?xml version="1.0" ?>
 <sdf version="1.5">
   <model name="fence">
-    <static>true</static>
+    <!-- NOT static=true (TEST CHANGE): Ignition/gz-sim contact sensors
+         have a known limitation where they can fail to report contacts
+         against purely static bodies - suspected root cause of the
+         robot visibly getting physically wedged against a fence panel
+         (confirmed via ground_truth/pose freezing mid-drive) while
+         EVERY chassis/wheel contact topic stayed empty the whole time.
+         Anchored rigidly to the world via a fixed joint below instead -
+         immobile like a true static body, but a real dynamic link the
+         contact system tracks, which is the standard workaround for
+         this limitation. Needs a real (if arbitrary - it can never
+         actually move) inertial block since it's no longer static. -->
     <link name="link">
       <pose>0 0 0.915 0 0 0</pose>
+      <inertial>
+        <mass>50.0</mass>
+        <inertia>
+          <ixx>1.0</ixx>
+          <iyy>1.0</iyy>
+          <izz>1.0</izz>
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyz>0.0</iyz>
+        </inertia>
+      </inertial>
       <collision name="collision">
         <geometry>
           <box>
@@ -49,5 +70,9 @@
         </material>
       </visual>
     </link>
+    <joint name="fence_fixed_to_world" type="fixed">
+      <parent>world</parent>
+      <child>link</child>
+    </joint>
   </model>
 </sdf>

@@ -1,0 +1,25 @@
+# Example scripted flythrough for camera_trajectory_node.py's own
+# "custom" mode (sim_bringup.launch.py's visual:=custom), passed via
+# camera_waypoints_file. See camera_trajectory_node.py's
+# _load_custom_waypoints docstring for the exact schema; this file is a
+# worked example, not a template you must copy verbatim.
+#
+# `t` is seconds since the camera node started (roughly launch time, not
+# mission start), NOT simulated mission time -- start your own file's
+# timeline accordingly. Positions are absolute world coordinates, tuned
+# here for orchard_nbv.sdf's own default single-robot spawn point
+# (robot1_x=-5.0, robot1_y=-3.0, see sim_bringup.launch.py) -- retune x/y
+# for a different world or spawn point.
+#
+# The path this describes: start high overhead looking straight down at
+# the spawn point, descend into a level flythrough alongside the robot's
+# row, sweep across to the neighboring row, then climb back to the
+# overhead start pose -- `loop: true` repeats it, so a long recording
+# doesn't just freeze on the last keyframe once the flythrough ends.
+loop: true
+keyframes:
+  - {t: 0.0,  x: -5.0,  y: -3.0,  z: 15.0, yaw: -1.5708, pitch: 1.4}
+  - {t: 6.0,  x: -14.0, y: -3.0,  z: 5.0,  yaw: 0.0,      pitch: 0.35}
+  - {t: 12.0, x: -5.0,  y: -10.0, z: 4.0,  yaw: 1.5708,   pitch: 0.25}
+  - {t: 18.0, x: 4.0,   y: -3.0,  z: 5.0,  yaw: 3.1416,   pitch: 0.35}
+  - {t: 24.0, x: -5.0,  y: -3.0,  z: 15.0, yaw: -1.5708,  pitch: 1.4}

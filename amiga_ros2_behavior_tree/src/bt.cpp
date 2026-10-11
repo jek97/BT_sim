@@ -33,6 +33,7 @@
 #include "amiga_ros2_behavior_tree/actions/retract_tool.hpp"
 #include "amiga_ros2_behavior_tree/actions/hitched_id.hpp"
 #include "amiga_ros2_behavior_tree/actions/nearest_tool_of_kind.hpp"
+#include "amiga_ros2_behavior_tree/bt_visualization_logger.hpp"
 #include "amiga_ros2_behavior_tree/fault_reporter.hpp"
 #include "amiga_ros2_behavior_tree/xml_validation.hpp"
 #include "behaviortree_ros2/ros_node_params.hpp"
@@ -55,16 +56,28 @@ int main(int argc, char **argv) {
   // One report per node per interval. A ReactiveSequence re-ticks a failing
   // condition at the tick rate, and every report downstream costs an LLM call.
   nh->declare_parameter<double>("fault_min_interval_sec", 5.0);
+  // visual:=true's "record the BT execution too" feature -- see
+  // bt_visualization_logger.hpp's own module docstring and
+  // bt_visualizer_node.py (amiga_ros2_gazebo) for the other half.
+  // Relative, like fault_topic/mission_topic above -- see this file's own
+  // bt.launch.py header comment for why (a namespaced robot's own topic,
+  // not one shared/collided across every robot in a fleet).
+  nh->declare_parameter<std::string>("bt_visualization_topic", std::string("bt/visualization"));
+  nh->declare_parameter<bool>("bt_visualization", true);
   std::string mission_topic;
   bool xml_validation_enabled;
   std::string fault_topic;
   bool fault_reporting_enabled;
   double fault_min_interval_sec;
+  std::string bt_visualization_topic;
+  bool bt_visualization_enabled;
   nh->get_parameter("mission_topic", mission_topic);
   nh->get_parameter("xml_validation", xml_validation_enabled);
   nh->get_parameter("fault_topic", fault_topic);
   nh->get_parameter("fault_reporting", fault_reporting_enabled);
   nh->get_parameter("fault_min_interval_sec", fault_min_interval_sec);
+  nh->get_parameter("bt_visualization_topic", bt_visualization_topic);
+  nh->get_parameter("bt_visualization", bt_visualization_enabled);
 
   BehaviorTreeFactory factory;
   RosNodeParams ros_params;
@@ -248,6 +261,10 @@ int main(int argc, char **argv) {
   if (fault_reporting_enabled) {
     fault_pub = makeFaultPublisher(nh, fault_topic);
   }
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr bt_visualization_pub;
+  if (bt_visualization_enabled) {
+    bt_visualization_pub = makeBtVisualizationPublisher(nh, bt_visualization_topic);
+  }
 
   std::mutex mtx;
   std::optional<std::string> pending_mission;
@@ -294,6 +311,11 @@ int main(int argc, char **argv) {
     if (fault_pub) {
       fault_reporter = std::make_unique<FaultReporter>(
           tree, nh, fault_pub, fault_min_interval_sec);
+    }
+    std::unique_ptr<BTVisualizationLogger> bt_visualization_logger;
+    if (bt_visualization_pub) {
+      bt_visualization_logger = std::make_unique<BTVisualizationLogger>(
+          tree, nh, bt_visualization_pub);
     }
 
     RCLCPP_INFO(nh->get_logger(), "Starting mission execution...");

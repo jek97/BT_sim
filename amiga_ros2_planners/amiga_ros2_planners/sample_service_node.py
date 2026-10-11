@@ -57,7 +57,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 
 from amiga_interfaces.srv import TakeSample
-from amiga_ros2_planners.safety_monitor import SafetyMonitor
+from amiga_ros2_planners.safety_monitor import SafetyMonitor, DEFAULT_CONTACT_TOPICS
 
 _LATCHED_QOS = QoSProfile(depth=1)
 _LATCHED_QOS.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -81,28 +81,22 @@ class SampleServiceNode(Node):
 
         # TakeSample is INSTANTANEOUS (see this module's own docstring) --
         # there is no mid-execution to stop, so unlike the durative
-        # actions (move_to_node.py/move_to_openloop_node.py/
-        # tool_action_node.py, which check SafetyMonitor.tripped() on
-        # every poll of an ongoing action) this is a one-shot precondition
+        # actions (move_to_node.py/tool_action_node.py, which check
+        # SafetyMonitor.tripped() on every poll of an ongoing action)
+        # this is a one-shot precondition
         # check: refuse the whole call up front if either is already true
         # at the moment it's requested. See safety_monitor.py's own
         # module docstring.
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("battery_depleted_threshold_pct", 0.0)
-        self.declare_parameter("contact_topic_front", "chassis/contact_front")
-        self.declare_parameter("contact_topic_back", "chassis/contact_back")
-        self.declare_parameter("contact_topic_left", "chassis/contact_left")
-        self.declare_parameter("contact_topic_right", "chassis/contact_right")
+        self.declare_parameter("contact_topics", list(DEFAULT_CONTACT_TOPICS))
         self.declare_parameter("contact_stale_after_s", 0.5)
         self._safety = SafetyMonitor(
             self,
             battery_topic=self.get_parameter("battery_topic").value,
             battery_depleted_threshold_pct=self.get_parameter(
                 "battery_depleted_threshold_pct").value,
-            contact_topic_front=self.get_parameter("contact_topic_front").value,
-            contact_topic_back=self.get_parameter("contact_topic_back").value,
-            contact_topic_left=self.get_parameter("contact_topic_left").value,
-            contact_topic_right=self.get_parameter("contact_topic_right").value,
+            contact_topics=self.get_parameter("contact_topics").value,
             contact_stale_after_s=self.get_parameter("contact_stale_after_s").value,
         )
 

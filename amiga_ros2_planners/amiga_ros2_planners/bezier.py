@@ -39,10 +39,32 @@ def cubic_bezier_tangent(p0, p1, p2, p3, t):
 
 def sample_bezier_chain(control_points, samples_per_segment=10):
     """[(x,y), ...] of length 3k+1 -> [(x, y, yaw), ...], `samples_per_segment`
-    + 1 points per segment (the +1 only on the chain's own last segment,
-    so consecutive segments don't duplicate their shared boundary
-    point). `yaw` falls back to the previous sampled point's own yaw at
-    a zero-length segment (e.g. the degenerate "already there" chain
+    + 1 points per segment, EVERY segment (including each internal one) --
+    so a chain's own internal waypoint joins show up as two consecutive
+    samples at the exact same (x, y) but with the old segment's yaw and
+    the new segment's yaw respectively.
+
+    This intentionally duplicates the shared boundary point at every
+    internal join, rather than skipping it, so a genuine kink (e.g. a
+    straight-line multi-waypoint chain from planning_core._chain_
+    multi_leg_control_points(), which enforces no tangent continuity
+    across internal waypoints) is represented EXACTLY: the corner's own
+    (x, y) appears once with the old leg's heading and once with the
+    new leg's heading, rather than being approximated by a single
+    sample pair straddling the corner at a cut chord. This matters for
+    any consumer that estimates per-sample motion (duration/velocity)
+    between consecutive samples by fitting a constant-rate arc between
+    them: it gets a dist=0 pure rotation in place at the corner itself,
+    then an ordinary dyaw=0 straight/curved translation -- both exactly
+    representable, rather than one ill-posed combined segment across
+    the corner. Where a chain IS already tangent-continuous at a join
+    (dyaw ~ 0 there too), the duplicated pair is a ~0-distance,
+    ~0-rotation segment such a consumer would drop on its own, so this
+    is free for smooth paths and only changes behavior exactly where
+    it needs to.
+
+    `yaw` falls back to the previous sampled point's own yaw at a
+    zero-length segment (e.g. the degenerate "already there" chain
     every planning_core.py planner returns as [(x,y)]*4), or 0.0 for the
     very first point of a chain that is zero-length everywhere.
 
@@ -58,8 +80,7 @@ def sample_bezier_chain(control_points, samples_per_segment=10):
     points = []
     for seg in range(num_segments):
         p0, p1, p2, p3 = control_points[3 * seg:3 * seg + 4]
-        is_last_segment = seg == num_segments - 1
-        count = samples_per_segment + 1 if is_last_segment else samples_per_segment
+        count = samples_per_segment + 1
         for i in range(count):
             t = i / samples_per_segment
             x, y = evaluate_cubic_bezier(p0, p1, p2, p3, t)
