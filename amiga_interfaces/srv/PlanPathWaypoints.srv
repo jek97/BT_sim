@@ -42,9 +42,10 @@ geometry_msgs/Point[] waypoints
 # in -- empty if status is false.
 geometry_msgs/Point[] control_points
 
-# "completed", "no_path" (waypoints is non-empty but some leg has no
-# route), "no_waypoints" (waypoints was empty), or "no_pose" (the
-# server couldn't resolve the robot's own current position via tf2).
+# "completed" or "no_path" -- the latter covers every failure mode
+# (some leg has no route, waypoints was empty, the server couldn't
+# resolve the robot's own current position via tf2, or an unrecognized
+# algorithm), same convention as PlanPath.srv's own reason.
 string reason
 
 # true iff reason is "completed".

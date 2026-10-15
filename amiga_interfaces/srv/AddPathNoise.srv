@@ -1,0 +1,40 @@
+# AddPathNoise.srv
+#
+# Server: amiga_ros2_planners' path_noise_node. Sits between the planner
+# (move_to_node's own control_points -> nav_msgs/Path sampling) and Nav2's
+# FollowPath: move_to_node calls this once per walk, right after building
+# its nominal Path and before sending the FollowPath goal, and sends the
+# RETURNED path to FollowPath instead of the nominal one. Gated by
+# move_to_node's own enable_path_noise parameter -- when false, the call
+# is skipped entirely (byte-for-byte the behavior before this node
+# existed), not just left to this service's own zero-sigma pass-through.
+#
+# Implements the "deterministic executor, noisy reference" approach: Nav2
+# stays a plain, deterministic path follower; the probabilistic motion
+# model lives here instead, generating ONE open-loop noisy realization of
+# the nominal path offline, which FollowPath then tracks faithfully. With
+# both sigmas 0 (or the position.lateral/tangential config.yaml section
+# missing entirely), the realization equals nominal_path exactly byte-for-
+# byte -- see path_noise.py's own add_path_noise() docstring for the exact
+# noise model.
+#
+# nominal_speed_mps/step_dt_s (ds = nominal_speed_mps * step_dt_s) are
+# path_noise_node's OWN parameters, not part of this request:
+# problog_project's own config.yaml motion.speed and Nav2's own
+# controller_server.controller_frequency respectively -- both per-problem
+# constants a caller shouldn't vary walk-to-walk, not something to
+# recompute on every call.
+
+# The planner's own nominal path, in whatever frame move_to_node built it
+# in (typically "map") -- same convention PlanPath.srv's own response
+# documents.
+nav_msgs/Path nominal_path
+
+---
+# Response
+
+# The noisy open-loop realization, same frame/header as nominal_path,
+# resampled at path_noise_node's own fixed arc-length step. Identical to
+# nominal_path (not just statistically -- byte-for-byte unchanged) when
+# both sigmas are 0.
+nav_msgs/Path noisy_path

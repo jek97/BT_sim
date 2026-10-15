@@ -134,16 +134,19 @@ class SampleServiceNode(Node):
         return float(max(0, min(10, value)))
 
     def _on_request(self, request, response):
-        safety_reason = self._safety.tripped()
-        if safety_reason is not None:
-            response.reason = safety_reason
+        # Collapses SafetyMonitor's own battery_depleted/collision_detected
+        # into "failed" too -- unlike MoveTo.action's own reason (which
+        # keeps those separate, plus which obstacle), TakeSample's only
+        # distinguishes completed vs failed.
+        if self._safety.tripped() is not None:
+            response.reason = "failed"
             response.status = False
             response.value = 0.0
             return response
 
         success_probability = self.get_parameter("success_probability").value
         success = random.random() < success_probability
-        response.reason = "sample_success" if success else "sample_failure"
+        response.reason = "completed" if success else "failed"
         response.status = success
 
         if success:

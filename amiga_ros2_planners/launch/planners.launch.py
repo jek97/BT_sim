@@ -186,6 +186,53 @@ def generate_launch_description():
             "applied instead of tool_speed_<tool>_mps while deployed."),
         DeclareLaunchArgument("tool_speed_plow_deployed_mps", default_value="0.5"),
         DeclareLaunchArgument(
+            "enable_path_noise", default_value="true",
+            description="Whether path_noise_node is launched at all AND "
+            "move_to_node routes its own nominal path through it -- "
+            "false means both are skipped outright, launching/behaving "
+            "exactly as before this feature existed (not just a "
+            "best-effort fallback). run_problog_problem.launch.py "
+            "overrides this with whether config.yaml's own sigma_lateral/"
+            "sigma_tangential are actually nonzero."),
+        DeclareLaunchArgument(
+            "sigma_lateral", default_value="0.0",
+            description="path_noise_node's own sigma_lateral -- "
+            "config.yaml's own position.lateral.sigma (problog_problem."
+            "position_noise_params), 0.0 (no noise, exact pass-through) "
+            "if that problem has no `position` section at all. Also "
+            "used for the realization's own final-orientation noise -- "
+            "see path_noise.py's own module docstring."),
+        DeclareLaunchArgument(
+            "sigma_tangential", default_value="0.0",
+            description="path_noise_node's own sigma_tangential -- "
+            "config.yaml's own position.tangential.sigma, same default "
+            "convention as sigma_lateral above."),
+        DeclareLaunchArgument(
+            "nominal_speed_mps", default_value="1.0",
+            description="path_noise_node's own nominal_speed_mps -- "
+            "config.yaml's own motion.speed (problog_problem."
+            "position_noise_params), the SAME base speed every "
+            "tool_speed_*_mps above defaults from. Used as ds = "
+            "nominal_speed_mps * path_noise_step_dt_s, NOT "
+            "move_to_node's own live, possibly-tool-specific speed."),
+        DeclareLaunchArgument(
+            "path_noise_step_dt_s", default_value="0.2",
+            description="path_noise_node's own step_dt_s -- fixed, "
+            "physically-meaningful resampling step (seconds) the noise "
+            "realization is generated at: 1 / controller_server's own "
+            "controller_frequency (nav2_params_sim.yaml), resolved by "
+            "run_problog_problem.launch.py. 0.2 here matches Nav2's own "
+            "5.0 Hz default, for standalone launches that skip that "
+            "resolution step. NOT derived from a mission's own path "
+            "resolution -- see path_noise.py's own module docstring on "
+            "why that would silently change the noise level."),
+        DeclareLaunchArgument(
+            "path_noise_seed", default_value="-1",
+            description="path_noise_node's own seed -- -1 (default) is "
+            "an unseeded, genuinely-random generator reseeded on every "
+            "call; >=0 reseeds to that exact value every call, for a "
+            "reproducible realization."),
+        DeclareLaunchArgument(
             "tool_moving_drain_rate_cart_pct_s", default_value="0.1",
             description="config.yaml's own battery.moving_drain_rate / "
             "tool.equipped.<tool>.moving_drain_rate -- battery_sim_node's "
@@ -306,6 +353,22 @@ def generate_launch_description():
                     "tool_speed_plow_deployed_mps"),
                 "ploughed_cells_topic": LaunchConfiguration("ploughed_cells_topic"),
                 "plough_cell_size": LaunchConfiguration("plough_cell_size"),
+                "enable_path_noise": LaunchConfiguration("enable_path_noise"),
+            }],
+        ),
+        Node(
+            package="amiga_ros2_planners",
+            executable="path_noise",
+            name="path_noise_node",
+            namespace=namespace,
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("enable_path_noise")),
+            parameters=[{
+                "sigma_lateral": LaunchConfiguration("sigma_lateral"),
+                "sigma_tangential": LaunchConfiguration("sigma_tangential"),
+                "nominal_speed_mps": LaunchConfiguration("nominal_speed_mps"),
+                "step_dt_s": LaunchConfiguration("path_noise_step_dt_s"),
+                "seed": LaunchConfiguration("path_noise_seed"),
             }],
         ),
         Node(

@@ -10,6 +10,10 @@ BT::PortsList MoveTo::providedPorts() {
   return providedBasicPorts({
       BT::InputPort<std::vector<geometry_msgs::msg::Point>>("control_points"),
       BT::OutputPort<bool>("status"),
+      // See MoveTo.action's own Result comment for the full set of
+      // values "reason" can take, and when "collision_obstacle" is set.
+      BT::OutputPort<std::string>("reason"),
+      BT::OutputPort<std::string>("collision_obstacle"),
   });
 }
 
@@ -29,18 +33,30 @@ bool MoveTo::setGoal(Goal &goal) {
 BT::NodeStatus MoveTo::onResultReceived(const WrappedResult &result) {
   if (result.code != rclcpp_action::ResultCode::SUCCEEDED &&
       result.code != rclcpp_action::ResultCode::CANCELED) {
-    RCLCPP_ERROR(logger(), "MoveTo: action aborted");
+    // move_to_node.py's own abort paths all fill in `reason` before
+    // calling goal_handle.abort() -- result.result is populated here
+    // too, not just on SUCCEEDED/CANCELED.
+    const std::string reason = result.result ? result.result->reason : "";
     setOutput("status", false);
+    setOutput("reason", reason);
+    RCLCPP_ERROR(logger(), "MoveTo: action aborted (%s)", reason.c_str());
     return BT::NodeStatus::FAILURE;
   }
 
   setOutput("status", result.result->status);
+  setOutput("reason", result.result->reason);
+  setOutput("collision_obstacle", result.result->collision_obstacle);
 
   if (result.result->status) {
     RCLCPP_INFO(logger(), "MoveTo: completed");
     return BT::NodeStatus::SUCCESS;
   }
-  RCLCPP_WARN(logger(), "MoveTo: halted (battery depleted, collision, or cancel)");
+  if (result.result->reason == "collision_detected") {
+    RCLCPP_WARN(logger(), "MoveTo: halted (collision_detected, hit %s)",
+                result.result->collision_obstacle.c_str());
+  } else {
+    RCLCPP_WARN(logger(), "MoveTo: halted (%s)", result.result->reason.c_str());
+  }
   return BT::NodeStatus::FAILURE;
 }
 

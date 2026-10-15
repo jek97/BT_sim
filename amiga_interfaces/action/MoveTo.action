@@ -13,10 +13,14 @@
 # into a nav_msgs/Path and drives it through Nav2's own controller_server
 # FollowPath action -- see move_to_node.py's own module docstring for the
 # full translation. Only takes the input needed to execute the walk: no
-# triggers/reason port -- a battery-depleted or collision-detected halt
-# is an always-on safety cutoff (safety_monitor.py), not something a
-# caller configures, and this action reports only success/failure (see
-# `status` below), not why.
+# triggers port -- a battery-depleted or collision-detected halt is an
+# always-on safety cutoff (safety_monitor.py), not something a caller
+# configures. `status` below is still the one true/false success
+# signal (schema.yaml's own MoveTo.status port); `reason`/
+# `collision_obstacle` are diagnostic extras alongside it, for whoever
+# wants to know WHY a walk that ended early did (a BT leaf's own
+# halt-reason log line, a mission report, etc.) without having to
+# separately re-poll SafetyMonitor's own state after the fact.
 
 # Chained cubic Bezier control points (length 3k+1), the SAME format
 # PlanPath.srv's own control_points response carries.
@@ -31,6 +35,24 @@ geometry_msgs/Point[] control_points
 # DistanceBelow after this action completes, same as problog_project's
 # own tree does with its DistanceBelow condition node).
 bool status
+
+# One of: "completed" (status true), "battery_depleted",
+# "collision_detected" (see collision_obstacle below for which one), or
+# "interrupted" -- every other way a walk can end early: an external
+# cancel (e.g. the BT itself halting this leaf), max_walk_duration_s
+# elapsing with no FollowPath result (see move_to_node.py's own comment
+# on why that walk has no Nav2 recovery layer of its own),
+# controller_server never accepting the goal, Nav2's own FollowPath
+# action reporting failure/abort on its own, or this node failing to
+# even start the walk (bad control_points, FollowPath action server
+# unavailable, no odom pose, diff_drive_controller never active).
+string reason
+
+# The obstacle's own Gazebo collision name (e.g.
+# "tree_05::tree_05_link::tree_05_collision") this robot actually hit --
+# see safety_monitor.py's own collision_obstacle() -- set ONLY when
+# reason is "collision_detected", empty otherwise.
+string collision_obstacle
 ---
 # Feedback
 

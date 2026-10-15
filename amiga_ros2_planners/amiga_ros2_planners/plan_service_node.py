@@ -171,7 +171,7 @@ class PlanServiceNode(Node):
         xy = self._pose.get_xy()
         if xy is None:
             response.control_points = []
-            response.reason = "no_pose"
+            response.reason = "no_path"
             response.status = False
             return response
         sx, sy = xy
@@ -232,7 +232,7 @@ class PlanServiceNode(Node):
                 resolved = self._obstacles.get_obstacle(obstacle_id)
                 if resolved is None:
                     response.control_points = []
-                    response.reason = "no_obstacle"
+                    response.reason = "no_path"
                     response.status = False
                     return response
                 obstacle_id = resolved.id
@@ -240,13 +240,13 @@ class PlanServiceNode(Node):
                 sx, sy, obstacle_id, request.offset, obstacle_polygons)
         else:
             response.control_points = []
-            response.reason = f"unknown_algorithm({algorithm})"
+            response.reason = "no_path"
             response.status = False
             return response
 
         if control_points is None:
             response.control_points = []
-            response.reason = "no_obstacle" if algorithm == "follow_boarder" else "no_path"
+            response.reason = "no_path"
             response.status = False
             return response
 
@@ -265,7 +265,7 @@ class PlanServiceNode(Node):
         xy = self._pose.get_xy()
         if xy is None:
             response.control_points = []
-            response.reason = "no_pose"
+            response.reason = "no_path"
             response.status = False
             return response
         sx, sy = xy
@@ -273,7 +273,7 @@ class PlanServiceNode(Node):
         waypoints = [self._goal_transform.to_sim_frame(p.x, p.y) for p in request.waypoints]
         if not waypoints:
             response.control_points = []
-            response.reason = "no_waypoints"
+            response.reason = "no_path"
             response.status = False
             return response
 
@@ -295,7 +295,7 @@ class PlanServiceNode(Node):
             control_points = planning_core.plan_straight_waypoints_points(sx, sy, waypoints)
         else:
             response.control_points = []
-            response.reason = f"unknown_algorithm({algorithm})"
+            response.reason = "no_path"
             response.status = False
             return response
 

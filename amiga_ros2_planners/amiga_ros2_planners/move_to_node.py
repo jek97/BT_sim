@@ -14,9 +14,17 @@ stamped poses), not Bezier control points. So this node:
   1. Samples control_points into an (x, y, yaw) polyline (bezier.py,
      analytic tangent -> yaw, not finite-differenced), and builds a
      nav_msgs/Path from it.
-  2. Sends that Path as a FollowPath goal to Nav2's controller_server,
+  2. Runs that nominal Path through path_noise_node's own AddPathNoise
+     service (_add_path_noise) -- a no-op pass-through unless this
+     problem's own config.yaml opts into position noise (see
+     problog_problem.position_noise_params) -- and sends the Path IT
+     returns as the FollowPath goal to Nav2's controller_server,
      forwarding its own feedback (distance_to_goal) back out as this
-     action's own feedback.
+     action's own feedback. Nav2 stays a plain, deterministic path
+     follower either way; the probabilistic motion model, when enabled,
+     lives entirely in path_noise_node, applied once, offline, before
+     FollowPath ever sees the path -- see that node's own module
+     docstring.
   3. While FollowPath runs, polls an ALWAYS-ON safety cutoff
      (SafetyMonitor -- battery_state/chassis_contact_<side>, see
      safety_monitor.py) and cancels FollowPath the moment it trips.
@@ -63,6 +71,7 @@ from controller_manager_msgs.srv import ListControllers
 from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
+from amiga_interfaces.srv import AddPathNoise
 from amiga_ros2_planners.bezier import sample_bezier_chain
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
@@ -273,6 +282,21 @@ class MoveToNode(Node):
             SetParameters,
             self.get_parameter("controller_server_set_parameters_service").value,
             callback_group=self._cb_group)
+        # path_noise_node's own AddPathNoise service -- see _add_path_noise's
+        # own docstring. enable_path_noise is the SAME flag
+        # planners.launch.py uses to decide whether to even launch
+        # path_noise_node at all -- when false, _add_path_noise skips
+        # the call outright (launches/behaves exactly as it did before
+        # this feature existed), rather than relying on
+        # service_is_ready() happening to be false. path_noise_service
+        # is declared here rather than hardcoded so a mission that
+        # renames path_noise_node's own service can still override it.
+        self.declare_parameter("enable_path_noise", True)
+        self.declare_parameter("path_noise_service", "add_path_noise")
+        self._path_noise_client = self.create_client(
+            AddPathNoise,
+            self.get_parameter("path_noise_service").value,
+            callback_group=self._cb_group)
 
         # "free" is tool_action_node's own initial state and its own
         # first (latched) publish -- correct default even if this node
@@ -354,7 +378,16 @@ class MoveToNode(Node):
         doesn't take (service not up yet, wrong controller_id, an
         older Nav2 without this exact param name) just means the walk
         runs at whatever speed controller_server was already
-        configured with, not a reason to fail the whole action."""
+        configured with, not a reason to fail the whole action.
+
+        Returns the speed this walk is actually asking for (whether or
+        not the live override above took), or None if this tool kind
+        has no configured speed at all -- unused by _add_path_noise
+        below, which gets its own nominal_speed_mps from
+        path_noise_node's own parameter (config.yaml's motion.speed)
+        instead, not this per-tool value; kept as a return value for
+        any other future caller that needs this walk's own actual
+        speed."""
         if self._deployed and self._equipped_tool in ("cart", "plow"):
             speed = self.get_parameter(
                 f"tool_speed_{self._equipped_tool}_deployed_mps").value
@@ -365,13 +398,13 @@ class MoveToNode(Node):
                 "plow": self.get_parameter("tool_speed_plow_mps").value,
             }.get(self._equipped_tool)
         if speed is None:
-            return
+            return None
         if not self._set_params_client.service_is_ready():
             self.get_logger().warn(
                 "move_to_node: controller_server's set_parameters "
                 "service not ready, walking at whatever speed it's "
                 "already configured with")
-            return
+            return speed
         controller_name = controller_id or "FollowPath"
         param = Parameter()
         param.name = f"{controller_name}.desired_linear_vel"
@@ -380,6 +413,35 @@ class MoveToNode(Node):
         request = SetParameters.Request(parameters=[param])
         future = self._set_params_client.call_async(request)
         self._wait_for_future(future, timeout_sec=1.0)
+        return speed
+
+    def _add_path_noise(self, path):
+        """Best-effort: runs `path` through path_noise_node's own
+        AddPathNoise service, returning the noisy realization it hands
+        back -- or `path` itself unchanged if enable_path_noise is
+        false (the flag this method checks FIRST, before even looking
+        at the service -- "launch as it was before this feature
+        existed", not just a best-effort fallback), the service isn't
+        available, or the call otherwise fails. Never aborts the walk
+        over this, same philosophy as _apply_tool_speed above: noise
+        injection is an opt-in research feature (the service itself is
+        also a no-op whenever both its own sigmas are 0 -- see
+        problog_problem.position_noise_params), not something a
+        missing/slow service should ever fail a mission over."""
+        if not self.get_parameter("enable_path_noise").value:
+            return path
+        if not self._path_noise_client.service_is_ready():
+            return path
+        request = AddPathNoise.Request(nominal_path=path)
+        future = self._path_noise_client.call_async(request)
+        self._wait_for_future(future, timeout_sec=2.0)
+        result = future.result()
+        if result is None:
+            self.get_logger().warn(
+                "move_to_node: AddPathNoise call failed/timed out, "
+                "walking the nominal path unchanged")
+            return path
+        return result.noisy_path
 
     @staticmethod
     def _wait_for_future(future, timeout_sec, poll_interval_s=0.02):
@@ -461,6 +523,7 @@ class MoveToNode(Node):
             self.get_logger().error(f"bad control_points: {exc}")
             goal_handle.abort()
             result.status = False
+            result.reason = "interrupted"
             return result
 
         if not self._follow_path_client.wait_for_server(timeout_sec=5.0):
@@ -469,6 +532,7 @@ class MoveToNode(Node):
                 f"'{self.get_parameter('follow_path_action').value}' unavailable")
             goal_handle.abort()
             result.status = False
+            result.reason = "interrupted"
             return result
 
         # See this node's own constructor comment on why -- without a real
@@ -480,6 +544,7 @@ class MoveToNode(Node):
                 "move_to_node: no odom pose after startup timeout, aborting")
             goal_handle.abort()
             result.status = False
+            result.reason = "interrupted"
             return result
 
         # See the constructor's own comment on _list_controllers_client --
@@ -490,15 +555,17 @@ class MoveToNode(Node):
                 "'active' after startup timeout, aborting")
             goal_handle.abort()
             result.status = False
+            result.reason = "interrupted"
             return result
+
+        controller_id = self.get_parameter("controller_id").value
+        self._apply_tool_speed(controller_id)
+        path = self._add_path_noise(path)
 
         follow_goal = FollowPath.Goal()
         follow_goal.path = path
-        controller_id = self.get_parameter("controller_id").value
         if controller_id:
             follow_goal.controller_id = controller_id
-
-        self._apply_tool_speed(controller_id)
 
         # wait_for_server only confirms the action is visible on the ROS
         # graph, which for a Nav2 lifecycle node (controller_server) can be
@@ -524,6 +591,7 @@ class MoveToNode(Node):
                 self.get_logger().error("FollowPath goal rejected")
                 goal_handle.abort()
                 result.status = False
+                result.reason = "interrupted"
                 return result
             self.get_logger().warn(
                 "FollowPath goal rejected (controller_server likely not "
@@ -575,6 +643,7 @@ class MoveToNode(Node):
                     self._wait_for_future(get_result_future, timeout_sec=2.0)
                     goal_handle.abort()
                     result.status = False
+                    result.reason = "interrupted"
                     return result
                 if goal_handle.is_cancel_requested:
                     # bt.cpp's own MoveTo leaf (BT::RosActionNode::halt())
@@ -589,14 +658,21 @@ class MoveToNode(Node):
                     self._wait_for_future(get_result_future, timeout_sec=2.0)
                     goal_handle.canceled()
                     result.status = False
+                    result.reason = "interrupted"
                     return result
                 # ALWAYS-ON safety cutoff -- checked every poll (see
                 # safety_monitor.py).
                 safety_reason = self._safety.tripped()
                 if safety_reason is not None:
                     safety_tripped = True
+                    result.reason = safety_reason
+                    if safety_reason == "collision_detected":
+                        result.collision_obstacle = self._safety.collision_obstacle() or ""
                     self.get_logger().warn(
-                        f"MoveTo: safety cutoff tripped ({safety_reason}), cancelling")
+                        f"MoveTo: safety cutoff tripped ({safety_reason}"
+                        + (f", hit {result.collision_obstacle}"
+                           if result.collision_obstacle else "")
+                        + "), cancelling")
                     cancel_future = follow_path_goal_handle.cancel_goal_async()
                     self._wait_for_future(cancel_future, timeout_sec=5.0)
                     self._wait_for_future(get_result_future, timeout_sec=5.0)
@@ -612,12 +688,15 @@ class MoveToNode(Node):
             if status == GoalStatus.STATUS_SUCCEEDED:
                 goal_handle.succeed()
                 result.status = True
+                result.reason = "completed"
             elif status == GoalStatus.STATUS_CANCELED:
                 goal_handle.canceled()
                 result.status = False
+                result.reason = "interrupted"
             else:
                 goal_handle.abort()
                 result.status = False
+                result.reason = "interrupted"
             return result
         finally:
             if should_plough:

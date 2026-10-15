@@ -70,6 +70,21 @@ def is_real_contact(msg):
         for c in msg.contacts)
 
 
+def _non_ground_partner_name(msg):
+    """The OTHER body's own collision name (e.g. "tree_05::tree_05_link::
+    tree_05_collision") in the FIRST contact pair that isn't against
+    ground_plane -- i.e. "what this robot actually hit", for
+    SafetyMonitor's own collision_obstacle() below. Always returns a
+    name (never None) for a `msg` that is_real_contact() already
+    confirmed real -- only called in that case."""
+    for c in msg.contacts:
+        if _GROUND_MODEL_NAME not in c.collision1.name:
+            return c.collision1.name
+        if _GROUND_MODEL_NAME not in c.collision2.name:
+            return c.collision2.name
+    return None
+
+
 class SafetyMonitor:
     def __init__(self, node, battery_topic="battery_state",
                  battery_depleted_threshold_pct=0.0,
@@ -85,6 +100,11 @@ class SafetyMonitor:
         # makes by returning None rather than (0, 0).
         self._battery_percent = 100.0
         self._last_contact_time = {topic: None for topic in contact_topics}
+        # Which body this robot actually hit, per topic -- see
+        # collision_obstacle() below. Kept alongside (not instead of)
+        # _last_contact_time since collision_detected() only needs the
+        # timestamps; this is purely additive.
+        self._last_contact_obstacle = {topic: None for topic in contact_topics}
 
         node.create_subscription(BatteryState, battery_topic, self._on_battery, 10)
         for topic in contact_topics:
@@ -98,6 +118,7 @@ class SafetyMonitor:
     def _on_contact(self, topic, msg):
         if msg.contacts and is_real_contact(msg):
             self._last_contact_time[topic] = self._node.get_clock().now()
+            self._last_contact_obstacle[topic] = _non_ground_partner_name(msg)
 
     def battery_depleted(self):
         return self._battery_percent <= self._threshold
@@ -108,6 +129,27 @@ class SafetyMonitor:
         return any(
             t is not None and t > stale_after
             for t in self._last_contact_time.values())
+
+    def collision_obstacle(self):
+        """The obstacle's own collision name (see
+        _non_ground_partner_name) behind whichever contact topic most
+        recently saw a non-stale real contact, or None if
+        collision_detected() is currently false. A SEPARATE call from
+        tripped()/collision_detected() on purpose -- every existing
+        caller of tripped() only ever checks it for "is this reason
+        None", so adding a second return value there would break all
+        of them; callers that specifically care which obstacle (e.g.
+        move_to_node's own MoveTo.Result.collision_obstacle) call this
+        too, only when tripped() returned "collision_detected"."""
+        stale_after = self._node.get_clock().now() - rclpy.duration.Duration(
+            seconds=self._stale_after_s)
+        best_time, best_obstacle = None, None
+        for topic, t in self._last_contact_time.items():
+            if t is not None and t > stale_after:
+                if best_time is None or t > best_time:
+                    best_time = t
+                    best_obstacle = self._last_contact_obstacle[topic]
+        return best_obstacle
 
     def tripped(self):
         """The first reason this action should stop right now, or None --

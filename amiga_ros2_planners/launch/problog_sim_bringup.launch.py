@@ -115,6 +115,12 @@ def generate_launch_description():
     tool_speed_plow_deployed_mps = LaunchConfiguration("tool_speed_plow_deployed_mps")
     max_linear_vel = LaunchConfiguration("max_linear_vel")
     max_angular_vel = LaunchConfiguration("max_angular_vel")
+    enable_path_noise = LaunchConfiguration("enable_path_noise")
+    sigma_lateral = LaunchConfiguration("sigma_lateral")
+    sigma_tangential = LaunchConfiguration("sigma_tangential")
+    nominal_speed_mps = LaunchConfiguration("nominal_speed_mps")
+    path_noise_step_dt_s = LaunchConfiguration("path_noise_step_dt_s")
+    path_noise_seed = LaunchConfiguration("path_noise_seed")
     tool_moving_drain_rate_cart_pct_s = LaunchConfiguration("tool_moving_drain_rate_cart_pct_s")
     tool_moving_drain_rate_plow_pct_s = LaunchConfiguration("tool_moving_drain_rate_plow_pct_s")
     tool_moving_drain_rate_cart_deployed_pct_s = LaunchConfiguration(
@@ -252,6 +258,40 @@ def generate_launch_description():
             "stays at Nav2's own RegulatedPurePursuitController default "
             "for rotate_to_heading_angular_vel unless overridden.",
         ),
+        DeclareLaunchArgument(
+            "enable_path_noise", default_value="true",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides "
+            "this with whether config.yaml's own sigma_lateral/"
+            "sigma_tangential are actually nonzero.",
+        ),
+        DeclareLaunchArgument(
+            "sigma_lateral", default_value="0.0",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides "
+            "this with config.yaml's own position.lateral.sigma.",
+        ),
+        DeclareLaunchArgument(
+            "sigma_tangential", default_value="0.0",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides "
+            "this with config.yaml's own position.tangential.sigma.",
+        ),
+        DeclareLaunchArgument(
+            "nominal_speed_mps", default_value="1.0",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides "
+            "this with config.yaml's own motion.speed.",
+        ),
+        DeclareLaunchArgument(
+            "path_noise_step_dt_s", default_value="0.2",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides "
+            "this with 1 / controller_server's own controller_frequency."),
+        DeclareLaunchArgument(
+            "path_noise_seed", default_value="-1",
+            description="Forwarded to planners.launch.py's own arg of "
+            "the same name."),
         DeclareLaunchArgument("tool_moving_drain_rate_cart_pct_s", default_value="0.1"),
         DeclareLaunchArgument("tool_moving_drain_rate_plow_pct_s", default_value="0.1"),
         DeclareLaunchArgument(
@@ -383,6 +423,12 @@ def generate_launch_description():
             tool_speed_plow_mps=tool_speed_plow_mps,
             tool_speed_cart_deployed_mps=tool_speed_cart_deployed_mps,
             tool_speed_plow_deployed_mps=tool_speed_plow_deployed_mps,
+            enable_path_noise=enable_path_noise,
+            sigma_lateral=sigma_lateral,
+            sigma_tangential=sigma_tangential,
+            nominal_speed_mps=nominal_speed_mps,
+            path_noise_step_dt_s=path_noise_step_dt_s,
+            path_noise_seed=path_noise_seed,
             tool_moving_drain_rate_cart_pct_s=tool_moving_drain_rate_cart_pct_s,
             tool_moving_drain_rate_plow_pct_s=tool_moving_drain_rate_plow_pct_s,
             tool_moving_drain_rate_cart_deployed_pct_s=(

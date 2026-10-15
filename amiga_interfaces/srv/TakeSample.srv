@@ -21,13 +21,15 @@
 # those checks -- see that node's own module docstring.
 string id
 ---
-# One of "sample_success"/"sample_failure" -- matches
+# "completed" or "failed" -- the latter covers both an unsuccessful
+# draw (random.random() < success_probability, matching
 # problog_project/module/contracts/bt_actions.py's own bt_take_sample
-# reference implementation's reason strings EXACTLY (a single
-# random.random() < success_probability draw, no approximation).
+# reference implementation exactly) AND an ALWAYS-ON safety cutoff
+# (battery depleted/collision detected -- see safety_monitor.py)
+# tripping before the draw is even taken.
 string reason
 
-# true iff reason is "sample_success".
+# true iff reason is "completed".
 bool status
 
 # The drawn value, taken ONLY on success (matches schema.yaml's own

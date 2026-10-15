@@ -4,6 +4,7 @@ project(amiga_interfaces)
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/LoRaFrame.msg
@@ -18,12 +19,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/TakeSample.srv
   srv/HitchedId.srv
   srv/NearestToolOfKind.srv
+  srv/AddPathNoise.srv
   action/MoveTo.action
   action/InstallTool.action
   action/UninstallTool.action
   action/DeployTool.action
   action/RetractTool.action
-  DEPENDENCIES geometry_msgs
+  DEPENDENCIES geometry_msgs nav_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

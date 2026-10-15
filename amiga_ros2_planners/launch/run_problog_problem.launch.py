@@ -72,6 +72,8 @@ import json
 import os
 import tempfile
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
@@ -124,6 +126,26 @@ def launch_setup(context, *args, **kwargs):
     sample = problog_problem.sample_params(config)
     tool = problog_problem.tool_params(config)
     ploughing = problog_problem.ploughing_params(config)
+    position_noise = problog_problem.position_noise_params(config)
+
+    # path_noise_node's own step_dt_s -- 1 / controller_server's own
+    # controller_frequency (nav2_params_sim.yaml), resolved HERE rather
+    # than left as an independently-edited constant in planners.launch.py
+    # (see sim_bringup.launch.py's own max_linear_vel/max_angular_vel
+    # comment for the class of bug this avoids). Falls back to Nav2's
+    # own 5.0 Hz default if that key or the file itself is missing, same
+    # "don't hard-fail over a missing config value" convention every
+    # other problog_problem.py reader already uses.
+    nav2_params_path = os.path.join(
+        get_package_share_directory("amiga_navigation"),
+        "config", "nav2_params_sim.yaml")
+    with open(nav2_params_path) as f:
+        nav2_params = yaml.safe_load(f)
+    controller_frequency = float(
+        nav2_params.get("controller_server", {})
+        .get("ros__parameters", {})
+        .get("controller_frequency", 5.0))
+    path_noise_step_dt_s = 1.0 / controller_frequency
 
     problem_name = os.path.basename(os.path.normpath(problem_dir)) or "problog_problem"
     tree_path = os.path.join(problem_dir, "behavior_tree.xml")
@@ -191,6 +213,21 @@ def launch_setup(context, *args, **kwargs):
             "max_linear_vel": str(max(
                 tool["speed"]["free"], tool["speed"]["cart"], tool["speed"]["plow"],
                 tool["deployed_speed"]["cart"], tool["deployed_speed"]["plow"])),
+            # path_noise_node's own sigma_lateral/sigma_tangential/
+            # nominal_speed_mps -- see problog_problem.
+            # position_noise_params. Both sigmas 0.0 (noise disabled)
+            # unless this problem's own config.yaml has a `position`
+            # section -- enable_path_noise mirrors that exactly, so
+            # path_noise_node isn't even launched, and move_to_node
+            # doesn't even attempt the call, for any problem that
+            # hasn't opted in.
+            "enable_path_noise": str(
+                position_noise["sigma_lateral"] > 0.0 or
+                position_noise["sigma_tangential"] > 0.0).lower(),
+            "sigma_lateral": str(position_noise["sigma_lateral"]),
+            "sigma_tangential": str(position_noise["sigma_tangential"]),
+            "nominal_speed_mps": str(position_noise["nominal_speed_mps"]),
+            "path_noise_step_dt_s": str(path_noise_step_dt_s),
             "tool_moving_drain_rate_cart_pct_s": str(tool["moving_drain_rate_pct_s"]["cart"]),
             "tool_moving_drain_rate_plow_pct_s": str(tool["moving_drain_rate_pct_s"]["plow"]),
             "tool_moving_drain_rate_cart_deployed_pct_s": str(

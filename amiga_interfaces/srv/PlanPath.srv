@@ -52,9 +52,10 @@ float64 step
 # pose in -- empty if status is false.
 geometry_msgs/Point[] control_points
 
-# "completed" or "no_path" (astar/voronoi -- no route exists), "no_obstacle"
-# (follow_boarder -- obstacle_id names no known tree), or "no_pose" (the
-# server couldn't resolve the robot's own current position via tf2).
+# "completed" or "no_path" -- the latter covers every failure mode
+# (no route exists, obstacle_id names no known tree, the server
+# couldn't resolve the robot's own current position via tf2, or an
+# unrecognized algorithm), not just "no route found specifically".
 string reason
 
 # true iff reason is "completed".

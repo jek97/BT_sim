@@ -202,6 +202,43 @@ def battery_params(config):
     }
 
 
+def position_noise_params(config):
+    """{sigma_lateral, sigma_tangential, nominal_speed_mps} for
+    path_noise_node's own AddPathNoise service, from config.yaml's own
+    position.lateral.sigma/position.tangential.sigma ("metres per
+    sqrt(time-unit)" -- see that file's own comments, and path_noise.py's
+    own module docstring for why problog_problem's "one time-unit == one
+    real second" convention -- already used by battery_params above --
+    means these plug straight into path_noise_node's own sigma_lateral/
+    sigma_tangential parameters with no conversion) and config.yaml's own
+    motion.speed (the SAME base speed tool_params defaults every
+    tool_speed_*_mps from -- see that function's own base_speed, and
+    this function's own docstring on why the noise realization uses
+    this single, problem-wide value rather than move_to_node's own
+    live, possibly-tool-specific desired_linear_vel: ds has to be a
+    fixed, problem-wide constant matching step_dt_s, not something that
+    can change walk-to-walk).
+
+    sigma_lateral/sigma_tangential default to 0.0/0.0 (no noise,
+    path_noise_node becomes an exact pass-through) if config.yaml has
+    no `position` section at all -- deliberately NOT sample_params'/
+    battery_params' own "sensible nonzero default" convention, since
+    path noise is a new, opt-in behavior change: a problem that has
+    never configured this section should see byte-for-byte the same
+    FollowPath path it always got, not silent noise it never asked
+    for. nominal_speed_mps defaults to 1.0 (motion.speed's own default,
+    see tool_params) if config.yaml has no `motion` section either."""
+    position = config.get("position", {})
+    lateral = position.get("lateral", {})
+    tangential = position.get("tangential", {})
+    motion = config.get("motion", {})
+    return {
+        "sigma_lateral": float(lateral.get("sigma", 0.0)),
+        "sigma_tangential": float(tangential.get("sigma", 0.0)),
+        "nominal_speed_mps": float(motion.get("speed", 1.0)),
+    }
+
+
 _TOOL_KINDS = ("cart", "plow")
 _DEFAULT_TOOL_DURATION_S = 10.0
 _DEFAULT_TOOL_SUCCESS_PROBABILITY = 0.9
