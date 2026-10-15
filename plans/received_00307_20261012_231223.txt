@@ -1,6 +1,0 @@
-frame_id: base_link
-stamp: 62.250000000
-num_poses: 2
-index,x,y,yaw_rad
-0,0.1318,-0.0010,0.0006
-1,1.1318,-0.0004,0.0006
