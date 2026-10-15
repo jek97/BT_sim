@@ -53,7 +53,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -111,6 +113,8 @@ def generate_launch_description():
     tool_speed_plow_mps = LaunchConfiguration("tool_speed_plow_mps")
     tool_speed_cart_deployed_mps = LaunchConfiguration("tool_speed_cart_deployed_mps")
     tool_speed_plow_deployed_mps = LaunchConfiguration("tool_speed_plow_deployed_mps")
+    max_linear_vel = LaunchConfiguration("max_linear_vel")
+    max_angular_vel = LaunchConfiguration("max_angular_vel")
     tool_moving_drain_rate_cart_pct_s = LaunchConfiguration("tool_moving_drain_rate_cart_pct_s")
     tool_moving_drain_rate_plow_pct_s = LaunchConfiguration("tool_moving_drain_rate_plow_pct_s")
     tool_moving_drain_rate_cart_deployed_pct_s = LaunchConfiguration(
@@ -230,6 +234,24 @@ def generate_launch_description():
         DeclareLaunchArgument("tool_speed_plow_mps", default_value="0.5"),
         DeclareLaunchArgument("tool_speed_cart_deployed_mps", default_value="0.5"),
         DeclareLaunchArgument("tool_speed_plow_deployed_mps", default_value="0.5"),
+        DeclareLaunchArgument(
+            "max_linear_vel", default_value="1.0",
+            description="Forwarded to sim_bringup.launch.py's own arg of "
+            "the same name -- run_problog_problem.launch.py overrides this "
+            "with the max of config.yaml's own authored tool speeds, so "
+            "the actuator clamp/velocity_smoother never silently cap a "
+            "speed a mission actually asked for. The 0.5 defaults above "
+            "are move_to_node.py's own declare_parameter fallbacks, used "
+            "only if this launch chain is bypassed entirely.",
+        ),
+        DeclareLaunchArgument(
+            "max_angular_vel", default_value="1.8",
+            description="Forwarded to sim_bringup.launch.py's own arg of "
+            "the same name. problog_project has no authored angular-speed "
+            "value of its own, so this isn't derived from config.yaml -- "
+            "stays at Nav2's own RegulatedPurePursuitController default "
+            "for rotate_to_heading_angular_vel unless overridden.",
+        ),
         DeclareLaunchArgument("tool_moving_drain_rate_cart_pct_s", default_value="0.1"),
         DeclareLaunchArgument("tool_moving_drain_rate_plow_pct_s", default_value="0.1"),
         DeclareLaunchArgument(
@@ -268,6 +290,14 @@ def generate_launch_description():
             "problog_project problem."),
         DeclareLaunchArgument("payload_length_included", default_value="true"),
 
+        # Same convention as PROBLEM_DIR -- lets battery_sim_node.py
+        # (currently the only consumer) pick its own speed topic (EKF
+        # odometry vs. ground_truth_node.py's own, see that node's own
+        # module docstring) without a new launch argument threaded
+        # through sim_bringup.launch.py/planners.launch.py just for this.
+        SetEnvironmentVariable(
+            "LAUNCH_LOCALIZATION", LaunchConfiguration("launch_localization")),
+
         _include(
             "amiga_ros2_gazebo", "sim_bringup.launch.py",
             world=world,
@@ -296,6 +326,16 @@ def generate_launch_description():
             # (MoveIt, kortex_move, its own ros2_control controllers) is
             # launched for it.
             launch_localization=LaunchConfiguration("launch_localization"),
+            # Single source of truth for the actuator clamp
+            # (ros2_controllers_sim.yaml) and velocity_smoother/FollowPath
+            # (nav2_params_sim.yaml) -- see sim_bringup.launch.py's own
+            # DeclareLaunchArgument descriptions. run_problog_problem.
+            # launch.py computes this from config.yaml's own authored tool
+            # speeds (the actual ceiling those speeds need to fit under),
+            # NOT just motion.speed alone, in case config.yaml ever
+            # authors a tool speed higher than the free-motion one.
+            max_linear_vel=max_linear_vel,
+            max_angular_vel=max_angular_vel,
             launch_arm="false",
             headless=LaunchConfiguration("headless"),
             mission_schema=mission_schema,

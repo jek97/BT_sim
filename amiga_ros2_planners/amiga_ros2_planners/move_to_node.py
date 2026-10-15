@@ -21,21 +21,6 @@ stamped poses), not Bezier control points. So this node:
      (SafetyMonitor -- battery_state/chassis_contact_<side>, see
      safety_monitor.py) and cancels FollowPath the moment it trips.
 
-Before step 2, _rotate_to_initial_heading() checks whether this walk's
-own first Bezier segment departs in a direction that actually matches
-the robot's current heading. planning_core.py's planners only ever see
-start/goal POSITIONS, never the robot's heading, so a walk starting
-right after some earlier, unrelated MoveTo left the robot facing a
-different way departs at whatever angle happens to connect the two
-points -- Nav2's own use_rotate_to_heading only fires on direction
-changes WITHIN a path, never on this kind of goal-to-goal mismatch
-(confirmed empirically via problem7L: zero mismatch at a MoveTo/MoveTo
-boundary, zero wobble there; problem3L's own 90 deg mismatch there,
-wobble there and nowhere else). If the mismatch exceeds
-heading_mismatch_threshold_rad, this node rotates in place (direct
-/cmd_vel Twist -- FollowPath's own goal hasn't been sent yet) before
-ever starting FollowPath.
-
 main()'s own SIGINT handler also cancels any FollowPath goal still in
 flight before rclpy's own shutdown runs (see
 cancel_all_active_follow_path_goals()) -- without that, Ctrl+C mid-walk
@@ -69,7 +54,7 @@ from rclpy.action import ActionServer, ActionClient, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, Twist
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from nav2_msgs.action import FollowPath
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
@@ -78,7 +63,7 @@ from controller_manager_msgs.srv import ListControllers
 from std_msgs.msg import String
 
 from amiga_interfaces.action import MoveTo
-from amiga_ros2_planners.bezier import sample_bezier_chain, cubic_bezier_tangent
+from amiga_ros2_planners.bezier import sample_bezier_chain
 from amiga_ros2_planners.ploughing import cell_index
 from amiga_ros2_planners.pose import PoseProvider
 from amiga_ros2_planners.safety_monitor import SafetyMonitor, DEFAULT_CONTACT_TOPICS
@@ -239,28 +224,6 @@ class MoveToNode(Node):
             self.get_parameter("base_frame").value,
             pose_topic=self.get_parameter("pose_topic").value,
         )
-
-        # Pre-rotate-in-place whenever this walk's own first Bezier
-        # segment departs in a direction that doesn't match the robot's
-        # ACTUAL current heading -- see _rotate_to_initial_heading's own
-        # docstring for why this is needed: straight_control_points (and
-        # every other planning_core.py leg planner) only knows the
-        # START/GOAL POSITIONS, never the robot's current heading, so a
-        # walk that starts right after a PREVIOUS, unrelated MoveTo left
-        # the robot facing some other way departs at whatever angle the
-        # straight line to the first waypoint happens to be -- fine when
-        # that happens to line up with how the robot is already facing
-        # (true for the mission's very first walk, off a sim spawn pose
-        # chosen to face the first leg), but a real, uncorrected
-        # heading error otherwise. FollowPath's own
-        # use_rotate_to_heading only fires on IN-PATH direction changes,
-        # never on this kind of goal-to-goal mismatch, so it has to be
-        # handled here instead.
-        self.declare_parameter("heading_mismatch_threshold_rad", math.radians(20.0))
-        self.declare_parameter("rotate_in_place_angular_speed", 0.5)
-        self.declare_parameter("rotate_in_place_tolerance_rad", math.radians(5.0))
-        self.declare_parameter("rotate_in_place_timeout_s", 15.0)
-        self._cmd_vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
 
         # The FollowPath client needs to complete WHILE this action's own
         # execute callback is still running -- a ReentrantCallbackGroup
@@ -487,90 +450,6 @@ class MoveToNode(Node):
             path.poses.append(pose)
         return path
 
-    def _initial_path_heading(self, control_points):
-        """Heading (rad) the chain's own FIRST Bezier segment departs in,
-        from the same analytic tangent sample_bezier_chain/bezier.py
-        itself uses for yaw (t=0 on control_points[0:4]) -- or None for
-        a degenerate zero-length first segment (e.g. the "already there"
-        chain planning_core.py's own planners return when start==goal),
-        which has no meaningful direction to align to."""
-        p0, p1, p2, p3 = control_points[0:4]
-        dx, dy = cubic_bezier_tangent(p0, p1, p2, p3, 0.0)
-        if dx == 0.0 and dy == 0.0:
-            return None
-        return math.atan2(dy, dx)
-
-    def _rotate_to_initial_heading(self, control_points, goal_handle):
-        """Rotates in place, by direct /cmd_vel Twist (this walk's
-        FollowPath goal hasn't been sent yet, so there's no other
-        publisher to conflict with -- see this method's own caller),
-        until the robot's current heading is within
-        rotate_in_place_tolerance_rad of this chain's own first-segment
-        heading, or rotate_in_place_timeout_s elapses. No-ops if the
-        mismatch is already under heading_mismatch_threshold_rad, or if
-        the first segment/current heading isn't meaningful (see
-        _initial_path_heading above, and PoseProvider.get_yaw's own
-        "None until the first pose arrives" case).
-
-        Returns True if the walk should proceed (aligned, skipped, or
-        timed out -- a timeout here falls through to FollowPath rather
-        than aborting the whole walk, since a merely-imperfect heading
-        at the START of a potentially long FollowPath goal is not worth
-        failing the mission over), or False if a cancel was requested
-        while rotating (caller must stop without ever sending FollowPath)."""
-        target_yaw = self._initial_path_heading(control_points)
-        if target_yaw is None:
-            return True
-        if self._pose.get_xy() is None:
-            return True  # no pose yet; _execute()'s own odom-wait already covers this
-        current_yaw = self._pose.get_yaw()
-        if current_yaw is None:
-            return True
-
-        def _angle_diff(a, b):
-            return math.atan2(math.sin(a - b), math.cos(a - b))
-
-        diff = _angle_diff(target_yaw, current_yaw)
-        threshold = self.get_parameter("heading_mismatch_threshold_rad").value
-        if abs(diff) <= threshold:
-            return True
-
-        self.get_logger().info(
-            f"MoveTo: current heading {math.degrees(current_yaw):.1f} deg vs "
-            f"path's own initial heading {math.degrees(target_yaw):.1f} deg "
-            f"(mismatch {math.degrees(diff):.1f} deg) -- rotating in place "
-            "before starting FollowPath")
-
-        angular_speed = self.get_parameter("rotate_in_place_angular_speed").value
-        tolerance = self.get_parameter("rotate_in_place_tolerance_rad").value
-        timeout = self.get_parameter("rotate_in_place_timeout_s").value
-        poll_period = self.get_parameter("poll_period_s").value
-        deadline = time.monotonic() + timeout
-
-        while abs(diff) > tolerance:
-            if goal_handle.is_cancel_requested:
-                self._cmd_vel_pub.publish(Twist())
-                return False
-            if time.monotonic() >= deadline:
-                self.get_logger().warn(
-                    "MoveTo: rotate-in-place timed out before reaching the "
-                    "path's own initial heading, proceeding to FollowPath "
-                    "anyway")
-                break
-            cmd = Twist()
-            cmd.angular.z = math.copysign(angular_speed, diff)
-            self._cmd_vel_pub.publish(cmd)
-            time.sleep(poll_period)
-            if self._pose.get_xy() is None:
-                break
-            current_yaw = self._pose.get_yaw()
-            if current_yaw is None:
-                break
-            diff = _angle_diff(target_yaw, current_yaw)
-
-        self._cmd_vel_pub.publish(Twist())
-        return True
-
     def _execute(self, goal_handle):
         goal = goal_handle.request
         result = MoveTo.Result()
@@ -610,11 +489,6 @@ class MoveToNode(Node):
                 "move_to_node: diff_drive_controller never reported "
                 "'active' after startup timeout, aborting")
             goal_handle.abort()
-            result.status = False
-            return result
-
-        if not self._rotate_to_initial_heading(control_points, goal_handle):
-            goal_handle.canceled()
             result.status = False
             return result
 
@@ -718,8 +592,11 @@ class MoveToNode(Node):
                     return result
                 # ALWAYS-ON safety cutoff -- checked every poll (see
                 # safety_monitor.py).
-                if self._safety.tripped() is not None:
+                safety_reason = self._safety.tripped()
+                if safety_reason is not None:
                     safety_tripped = True
+                    self.get_logger().warn(
+                        f"MoveTo: safety cutoff tripped ({safety_reason}), cancelling")
                     cancel_future = follow_path_goal_handle.cancel_goal_async()
                     self._wait_for_future(cancel_future, timeout_sec=5.0)
                     self._wait_for_future(get_result_future, timeout_sec=5.0)

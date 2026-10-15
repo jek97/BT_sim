@@ -180,6 +180,17 @@ def launch_setup(context, *args, **kwargs):
             "tool_speed_plow_mps": str(tool["speed"]["plow"]),
             "tool_speed_cart_deployed_mps": str(tool["deployed_speed"]["cart"]),
             "tool_speed_plow_deployed_mps": str(tool["deployed_speed"]["plow"]),
+            # The actuator clamp (ros2_controllers_sim.yaml) and
+            # velocity_smoother/FollowPath (nav2_params_sim.yaml) need to
+            # sit at or above every tool speed config.yaml actually
+            # authors, or move_to_node.py's own live desired_linear_vel
+            # override gets silently capped below what a mission asked
+            # for -- the same class of silent mismatch that caused the
+            # wobble this whole mechanism exists to prevent (see
+            # sim_bringup.launch.py's own max_linear_vel description).
+            "max_linear_vel": str(max(
+                tool["speed"]["free"], tool["speed"]["cart"], tool["speed"]["plow"],
+                tool["deployed_speed"]["cart"], tool["deployed_speed"]["plow"])),
             "tool_moving_drain_rate_cart_pct_s": str(tool["moving_drain_rate_pct_s"]["cart"]),
             "tool_moving_drain_rate_plow_pct_s": str(tool["moving_drain_rate_pct_s"]["plow"]),
             "tool_moving_drain_rate_cart_deployed_pct_s": str(

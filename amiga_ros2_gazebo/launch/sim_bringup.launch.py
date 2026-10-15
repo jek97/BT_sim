@@ -164,6 +164,25 @@ def launch_setup(context, *args, **kwargs):
     expect_json = LaunchConfiguration("expect_json")
     payload_length_included = LaunchConfiguration("payload_length_included")
     planner_host = LaunchConfiguration("planner_host")
+    # Single source of truth for this fleet's own top speed, threaded into
+    # BOTH ros2_controllers_sim.yaml's own diff_drive_controller actuator
+    # clamp (gazebo.launch.py) and nav2_params_sim.yaml's own
+    # velocity_smoother/FollowPath sections (navigation.launch.py) -- see
+    # those two files' own rewrite constants for why this used to be 3+
+    # independently-edited numbers that drifted out of agreement with each
+    # other (one of them, velocity_smoother's, silently stuck on Nav2's own
+    # stock TurtleBot3-era default the whole time -- see nav2_params_sim.yaml's
+    # own velocity_smoother comment). Defaults: max_linear_vel from
+    # problog_project's own problems/problem3L/config.yaml motion.speed
+    # (1.0 m/s -- the ONLY authored speed value in that project; it has no
+    # separate angular-speed concept of its own, since its motion model is a
+    # constant-speed spline traversal with rotation implied by curvature,
+    # not separately authored). max_angular_vel from Nav2's own
+    # RegulatedPurePursuitController default for rotate_to_heading_angular_vel
+    # (1.8 rad/s) -- not velocity_smoother's own stock default (1.0 rad/s),
+    # which is the untuned value this whole change exists to get away from.
+    max_linear_vel = LaunchConfiguration("max_linear_vel")
+    max_angular_vel = LaunchConfiguration("max_angular_vel")
 
     launch_nav = LaunchConfiguration("launch_nav").perform(context).lower() == "true"
     # "simplified" branch: the EKF/navsat_transform/wheel_odometry stack
@@ -244,6 +263,8 @@ def launch_setup(context, *args, **kwargs):
             robot1_y=robot1_y,
             robot1_z=robot1_z,
             robot1_yaw=robot1_yaw,
+            max_linear_vel=max_linear_vel,
+            max_angular_vel=max_angular_vel,
             # gazebo.launch.py's own arm-controller spawners (jtc/gripper)
             # are a separate gating point from sim_arm.launch.py's software
             # stack below -- both need this same flag so "no node relative
@@ -360,6 +381,13 @@ def launch_setup(context, *args, **kwargs):
                     "navigation.launch.py",
                     use_sim_time="True",
                     namespace=ns,
+                    # controller_server's own odom_topic needs to match
+                    # whichever stack actually owns the map/odom/base_link
+                    # TF -- see navigation.launch.py's own
+                    # CONTROLLER_SERVER_ODOM_TOPIC_LINE comment.
+                    launch_localization=str(launch_localization).lower(),
+                    max_linear_vel=max_linear_vel,
+                    max_angular_vel=max_angular_vel,
                     # The Gazebo model is slightly larger than the real Amiga,
                     # so the real robot's footprint/collision polygons are too
                     # tight here and Nav2 racks up phantom-looking collisions
@@ -703,6 +731,30 @@ def generate_launch_description():
                 "disables planner discovery/registration entirely (see "
                 "tcp_demux_node.cpp's own discovery_loop), the same as a "
                 "dev box feeding it a mission over plain `nc`.",
+            ),
+            DeclareLaunchArgument(
+                "max_linear_vel", default_value="1.0",
+                description="Single source of truth for this fleet's own max "
+                "linear speed (m/s), threaded into both "
+                "ros2_controllers_sim.yaml's diff_drive_controller actuator "
+                "clamp (gazebo.launch.py) and nav2_params_sim.yaml's "
+                "velocity_smoother/FollowPath sections (navigation.launch.py). "
+                "Default is problog_project's own problems/problem3L/"
+                "config.yaml motion.speed value -- the only authored speed "
+                "in that project.",
+            ),
+            DeclareLaunchArgument(
+                "max_angular_vel", default_value="1.8",
+                description="Same as max_linear_vel but for max angular speed "
+                "(rad/s). problog_project has no authored angular-speed "
+                "value of its own (its motion model is a constant-speed "
+                "spline traversal, with rotation implied by curvature, not "
+                "separately authored), so this defaults to Nav2's own "
+                "RegulatedPurePursuitController default for "
+                "rotate_to_heading_angular_vel -- NOT velocity_smoother's own "
+                "stock default (1.0 rad/s), which is the untuned, "
+                "TurtleBot3-era value this whole change exists to get away "
+                "from.",
             ),
             DeclareLaunchArgument(
                 "broken_sampler_robot",

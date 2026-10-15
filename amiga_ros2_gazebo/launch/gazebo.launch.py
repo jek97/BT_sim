@@ -87,6 +87,31 @@ def resolve_package_uris(content: str) -> str:
     return re.sub(r"package://([^/]+)/(.+?)(?=[<\"\s])", replacer, content)
 
 
+# ros2_controllers_sim.yaml's own diff_drive_controller actuator clamp --
+# rewritten here (rather than left as a static, independently-edited
+# number) so sim_bringup.launch.py's own max_linear_vel/max_angular_vel
+# args are the actual source of truth for this clamp too. These need to
+# agree with nav2_params_sim.yaml's own velocity_smoother/FollowPath
+# sections (rewritten the same way, by navigation.launch.py) -- a
+# mismatch there is exactly what let velocity_smoother silently run on
+# Nav2's own stock, badly-mismatched defaults for this whole project's
+# life (see nav2_params_sim.yaml's own velocity_smoother comment).
+CONTROLLERS_YAML_VELOCITY_REWRITES = [
+    (r"(?m)^(\s*linear\.x\.max_velocity:\s*).*$", "{max_linear_vel}"),
+    (r"(?m)^(\s*linear\.x\.min_velocity:\s*).*$", "-{max_linear_vel}"),
+    (r"(?m)^(\s*angular\.z\.max_velocity:\s*).*$", "{max_angular_vel}"),
+    (r"(?m)^(\s*angular\.z\.min_velocity:\s*).*$", "-{max_angular_vel}"),
+]
+
+
+def rewrite_controllers_yaml_velocity(content, max_linear_vel, max_angular_vel):
+    for pattern, replacement in CONTROLLERS_YAML_VELOCITY_REWRITES:
+        value = replacement.format(
+            max_linear_vel=max_linear_vel, max_angular_vel=max_angular_vel)
+        content = re.sub(pattern, rf"\g<1>{value}", content)
+    return content
+
+
 def qualify_ros(ns: str, path: str) -> str:
     """Absolute ROS name, namespaced under `ns` (ns="" leaves it unchanged)."""
     path = path.lstrip("/")
@@ -195,6 +220,8 @@ def launch_setup(context, *args, **kwargs):
     spacing_x = float(LaunchConfiguration("robot_spacing_x").perform(context))
     spacing_y = float(LaunchConfiguration("robot_spacing_y").perform(context))
     spawn_stagger = float(LaunchConfiguration("robot_spawn_stagger").perform(context))
+    max_linear_vel = LaunchConfiguration("max_linear_vel").perform(context)
+    max_angular_vel = LaunchConfiguration("max_angular_vel").perform(context)
     # "simplified" branch: sim_bringup.launch.py forwards its own launch_arm
     # (which already gates sim_arm.launch.py's whole software stack) down to
     # here too, so the arm's own ros2_control controllers never get spawned
@@ -283,6 +310,16 @@ def launch_setup(context, *args, **kwargs):
     # ── Resolve robot model SDF (shared template, namespaced per instance) ─
     model_path = os.path.join(pkg_gazebo, "models", "amiga_kinova", "model.sdf")
     controllers_yaml = os.path.join(pkg_gazebo, "config", "ros2_controllers_sim.yaml")
+    with open(controllers_yaml) as f:
+        controllers_yaml_content = f.read()
+    controllers_yaml_content = rewrite_controllers_yaml_velocity(
+        controllers_yaml_content, max_linear_vel, max_angular_vel)
+    tmp_controllers_yaml = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="ros2_controllers_sim_", delete=False
+    )
+    tmp_controllers_yaml.write(controllers_yaml_content)
+    tmp_controllers_yaml.flush()
+    controllers_yaml = tmp_controllers_yaml.name
     with open(model_path) as f:
         base_model_content = f.read()
     base_model_content = base_model_content.replace(
@@ -436,6 +473,15 @@ def launch_setup(context, *args, **kwargs):
                     "input_topic": f"/world/{world_name}/dynamic_pose/info",
                     "entity_name": name,
                     "output_topic": qualify_ros(ns, "ground_truth/pose"),
+                    # controller_server's own odom_topic gets pointed here
+                    # (see amiga_navigation/navigation.launch.py's own
+                    # CONTROLLER_SERVER_ODOM_TOPIC_LINE) whenever
+                    # launch_localization is false -- same explicit-
+                    # qualify convention as output_topic above, for the
+                    # same reason (nav2_params_sim.yaml's own
+                    # ABSOLUTE_NAV2_TOPICS list expects this topic
+                    # addressed absolutely, not namespace-auto-prefixed).
+                    "odom_output_topic": qualify_ros(ns, "odometry/groundtruth"),
                     "frame_id": "map",
                     "child_frame_id": f"{frame_prefix}base_link",
                     # Tied to launch_localization (see
@@ -602,6 +648,22 @@ def generate_launch_description():
             DeclareLaunchArgument("robot1_y", default_value="-3.0"),
             DeclareLaunchArgument("robot1_z", default_value="0.05"),
             DeclareLaunchArgument("robot1_yaw", default_value="0.0"),
+            DeclareLaunchArgument(
+                "max_linear_vel", default_value="1.0",
+                description="Forwarded to sim_bringup.launch.py's own arg of "
+                "the same name -- rewrites ros2_controllers_sim.yaml's own "
+                "diff_drive_controller linear.x.max_velocity/min_velocity "
+                "before ign_ros2_control loads it (see "
+                "CONTROLLERS_YAML_VELOCITY_REWRITES).",
+            ),
+            DeclareLaunchArgument(
+                "max_angular_vel", default_value="1.8",
+                description="Forwarded to sim_bringup.launch.py's own arg of "
+                "the same name -- rewrites ros2_controllers_sim.yaml's own "
+                "diff_drive_controller angular.z.max_velocity/min_velocity "
+                "before ign_ros2_control loads it (see "
+                "CONTROLLERS_YAML_VELOCITY_REWRITES).",
+            ),
             DeclareLaunchArgument(
                 "robot_spacing_x",
                 default_value="0.0",

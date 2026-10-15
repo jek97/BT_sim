@@ -38,30 +38,30 @@ def cubic_bezier_tangent(p0, p1, p2, p3, t):
 
 
 def sample_bezier_chain(control_points, samples_per_segment=10):
-    """[(x,y), ...] of length 3k+1 -> [(x, y, yaw), ...], `samples_per_segment`
-    + 1 points per segment, EVERY segment (including each internal one) --
-    so a chain's own internal waypoint joins show up as two consecutive
-    samples at the exact same (x, y) but with the old segment's yaw and
-    the new segment's yaw respectively.
+    """[(x,y), ...] of length 3k+1 -> [(x, y, yaw), ...]: `samples_per_segment`
+    points per internal segment, plus one extra (the chain's own final
+    endpoint) on the last segment -- so every internal waypoint join
+    appears exactly ONCE in the output, not as a duplicated zero-distance
+    pair.
 
-    This intentionally duplicates the shared boundary point at every
-    internal join, rather than skipping it, so a genuine kink (e.g. a
-    straight-line multi-waypoint chain from planning_core._chain_
-    multi_leg_control_points(), which enforces no tangent continuity
-    across internal waypoints) is represented EXACTLY: the corner's own
-    (x, y) appears once with the old leg's heading and once with the
-    new leg's heading, rather than being approximated by a single
-    sample pair straddling the corner at a cut chord. This matters for
-    any consumer that estimates per-sample motion (duration/velocity)
-    between consecutive samples by fitting a constant-rate arc between
-    them: it gets a dist=0 pure rotation in place at the corner itself,
-    then an ordinary dyaw=0 straight/curved translation -- both exactly
-    representable, rather than one ill-posed combined segment across
-    the corner. Where a chain IS already tangent-continuous at a join
-    (dyaw ~ 0 there too), the duplicated pair is a ~0-distance,
-    ~0-rotation segment such a consumer would drop on its own, so this
-    is free for smooth paths and only changes behavior exactly where
-    it needs to.
+    Used to duplicate the shared boundary point at every internal join
+    (old segment's own final sample AND the new segment's own first
+    sample, both at the identical (x, y), with the old leg's heading and
+    the new leg's heading respectively) for the benefit of this
+    project's own now-removed open-loop MoveTo backend, which fit a
+    constant-rate arc between consecutive samples and needed an explicit
+    dist=0 pure-rotation pair to represent a kink exactly. Nav2's
+    RegulatedPurePursuitController is now the only consumer, and its own
+    carrot-point/closest-point-on-path search does not expect two
+    samples at the identical position -- confirmed via a live /
+    lookahead_point trace showing the carrot snapping to a completely
+    different point (e.g. from ~0.8m ahead to ~0.8m behind the robot in
+    a single control cycle) right around an internal corner's own
+    duplicate pair. A kink in the PATH's own geometry is still exactly
+    representable here (the single sample right at the join still gets
+    the new segment's own tangent, an abrupt orientation change versus
+    the previous sample), it just doesn't duplicate the POSITION
+    alongside it anymore.
 
     `yaw` falls back to the previous sampled point's own yaw at a
     zero-length segment (e.g. the degenerate "already there" chain
@@ -80,7 +80,12 @@ def sample_bezier_chain(control_points, samples_per_segment=10):
     points = []
     for seg in range(num_segments):
         p0, p1, p2, p3 = control_points[3 * seg:3 * seg + 4]
-        count = samples_per_segment + 1
+        # Every segment but the last stops one sample short of its own
+        # t=1.0 endpoint -- the NEXT segment's own t=0.0 sample covers
+        # that exact position instead (with the new segment's own
+        # tangent), so the shared join appears once, not twice.
+        is_last_segment = (seg == num_segments - 1)
+        count = samples_per_segment + 1 if is_last_segment else samples_per_segment
         for i in range(count):
             t = i / samples_per_segment
             x, y = evaluate_cubic_bezier(p0, p1, p2, p3, t)

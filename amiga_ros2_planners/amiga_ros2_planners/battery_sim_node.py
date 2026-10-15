@@ -31,7 +31,25 @@ problog_problem.battery_params/tool_params already use):
 Publishes sensor_msgs/BatteryState on `battery_topic` (default
 "battery_state", relative -- namespaces the same way every other topic
 in this repo's sim launch files does).
+
+Speed source: odom_topic (odometry/filtered/local, the EKF's own fused
+twist) only has a publisher when amiga_localization's EKF stack is
+actually running (launch_localization:=true) -- with it left at its own
+default false (ground truth owns the map/odom/base_link TF instead, see
+amiga_ros2_gazebo/scripts/ground_truth_node.py's own module docstring),
+that topic never arrives and _last_speed would silently stay 0.0
+forever, reading every walk as "idle" no matter how fast the robot
+actually moves. So this node picks its speed topic at startup from
+`launch_localization` (a bool parameter, defaulting to
+$LAUNCH_LOCALIZATION -- same convention as PROBLEM_DIR, set by
+problog_sim_bringup.launch.py from its own arg of the same name): true
+subscribes odom_topic exactly as before; false subscribes
+ground_truth_odom_topic (default "odometry/groundtruth",
+ground_truth_node.py's own finite-differenced twist) instead -- same
+message type either way, nav_msgs/Odometry, so _on_odom handles both.
 """
+import os
+
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
@@ -44,6 +62,11 @@ class BatterySimNode(Node):
         super().__init__("battery_sim_node")
 
         self.declare_parameter("odom_topic", "odometry/filtered/local")
+        self.declare_parameter("ground_truth_odom_topic", "odometry/groundtruth")
+        # See this node's own module docstring's "Speed source" section.
+        self.declare_parameter(
+            "launch_localization",
+            os.environ.get("LAUNCH_LOCALIZATION", "false").lower() == "true")
         self.declare_parameter("battery_topic", "battery_state")
         self.declare_parameter("start_percent", 100.0)
         self.declare_parameter("idle_drain_rate_pct_s", 0.01)
@@ -107,8 +130,12 @@ class BatterySimNode(Node):
         self._deployed = False
         self._activity = "idle"
 
+        if self.get_parameter("launch_localization").value:
+            speed_topic = self.get_parameter("odom_topic").value
+        else:
+            speed_topic = self.get_parameter("ground_truth_odom_topic").value
         self._odom_sub = self.create_subscription(
-            Odometry, self.get_parameter("odom_topic").value, self._on_odom, 10)
+            Odometry, speed_topic, self._on_odom, 10)
         self._pub = self.create_publisher(
             BatteryState, self.get_parameter("battery_topic").value, 10)
 
@@ -130,7 +157,9 @@ class BatterySimNode(Node):
 
         self.get_logger().info(
             f"battery_sim_node ready, publishing on "
-            f"'{self.get_parameter('battery_topic').value}'")
+            f"'{self.get_parameter('battery_topic').value}', speed topic="
+            f"'{speed_topic}' (launch_localization="
+            f"{self.get_parameter('launch_localization').value})")
 
     def _on_odom(self, msg):
         vx = msg.twist.twist.linear.x

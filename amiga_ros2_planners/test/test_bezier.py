@@ -15,21 +15,23 @@ def test_straight_line_yields_correct_endpoints_and_yaw():
     assert abs(yawn - 0.0) < 1.0e-9
 
 
-def test_sample_count_duplicates_segment_boundaries():
+def test_sample_count_does_not_duplicate_segment_boundaries():
     # Two straight segments end to end -- a degree-3, two-segment chain
     # (length 7) built by hand, sharing the boundary point (5,0). Every
-    # segment (including non-last ones) samples its own full endpoint,
-    # so the shared boundary point (5,0) appears twice on purpose (see
-    # sample_bezier_chain's own docstring for why).
+    # segment but the last stops one sample short of its own t=1.0
+    # endpoint -- the next segment's own t=0.0 sample covers that exact
+    # position instead -- so the shared boundary point (5,0) appears
+    # exactly ONCE (see sample_bezier_chain's own docstring for why).
     control_points = [
         (0.0, 0.0), (1.5, 0.0), (3.5, 0.0), (5.0, 0.0),
         (6.5, 0.0), (8.5, 0.0), (10.0, 0.0),
     ]
     samples = sample_bezier_chain(control_points, samples_per_segment=4)
-    assert len(samples) == (4 + 1) + (4 + 1)
+    assert len(samples) == 4 + (4 + 1)
     xs = [x for x, _, _ in samples]
     assert xs == sorted(xs)
-    assert samples[4][:2] == samples[5][:2] == (5.0, 0.0)
+    assert samples[4][:2] == (5.0, 0.0)
+    assert samples[3][:2] != (5.0, 0.0)
 
 
 def test_curved_path_yaw_matches_tangent_direction():

@@ -66,8 +66,15 @@
 
     linear.x.max_velocity: 1.0
     linear.x.min_velocity: -1.0
-    angular.z.max_velocity: 1.0
-    angular.z.min_velocity: -1.0
+    # TEST: raised from 1.0/-1.0 (ceil of nav2_params_sim.yaml's own
+    # FollowPath.rotate_to_heading_angular_vel, 1.8 rad/s) so the
+    # controller's own rotate-to-heading command is no longer silently
+    # clamped below what it's actually commanding. Did not fix the
+    # wobble; a further test lowering this to 0.8/-0.8 also made no
+    # difference and was reverted. Kept at 2.0/-2.0 since it's harmless
+    # either way.
+    angular.z.max_velocity: 2.0
+    angular.z.min_velocity: -2.0
 
     publish_rate: 20.0
 

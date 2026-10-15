@@ -69,10 +69,32 @@ odom == map (identity) is exactly correct, not a placeholder: tf2
 resolves base_link->odom by composing this static map->odom edge with
 the dynamic map->base_link one above, through their common "map"
 ancestor -- no second, competing authority over base_link itself.
+
+ALSO publishes a nav_msgs/Odometry on `odom_output_topic` (default
+"odometry/groundtruth"), same message type as amiga_localization's own
+EKF output (/odometry/filtered/local) -- controller_server's own
+odom_topic parameter gets pointed here instead when launch_localization
+is false (see navigation.launch.py's own RewrittenYaml substitution),
+since controller_server's OdomSmoother (feeding RegulatedPurePursuit
+Controller's use_velocity_scaled_lookahead_dist) otherwise has zero
+publishers to read from in that mode -- a real, previously-unnoticed
+gap, not a hypothetical one (confirmed via `ros2 topic info
+/odometry/filtered/local --verbose` showing Publisher count: 0 with the
+EKF off). Ignition's own dynamic_pose/info stream carries pose only, no
+twist, so this node's own cb() finite-differences consecutive pose
+samples (by THEIR OWN header stamps, not wall-clock, so this stays
+correct under use_sim_time) to get a body-frame linear.x/angular.z
+estimate -- the standard way a ground-truth/"P3D"-style plugin computes
+twist when the underlying sim state query doesn't hand back velocity
+directly. First sample after startup has no previous pose to diff
+against, so twist stays zero for that one message only.
 """
+import math
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, PoseStamped, TransformStamped
+from nav_msgs.msg import Odometry
 from tf2_msgs.msg import TFMessage
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
@@ -83,6 +105,7 @@ class GroundTruthNode(Node):
         self.declare_parameter("input_topic", "dynamic_pose/info")
         self.declare_parameter("entity_name", "amiga_kinova")
         self.declare_parameter("output_topic", "ground_truth/pose")
+        self.declare_parameter("odom_output_topic", "odometry/groundtruth")
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("child_frame_id", "base_link")
         self.declare_parameter("odom_frame_id", "odom")
@@ -95,6 +118,15 @@ class GroundTruthNode(Node):
         self.pub = self.create_publisher(
             PoseStamped, self.get_parameter("output_topic").value, 10
         )
+        self.odom_pub = self.create_publisher(
+            Odometry, self.get_parameter("odom_output_topic").value, 10
+        )
+        # Previous sample, for cb()'s own finite-differenced twist --
+        # None until the first message arrives.
+        self._prev_time = None
+        self._prev_x = 0.0
+        self._prev_y = 0.0
+        self._prev_yaw = 0.0
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
         if self.publish_tf:
             odom_frame_id = self.get_parameter("odom_frame_id").value
@@ -117,7 +149,8 @@ class GroundTruthNode(Node):
             (t for t in msg.transforms if t.child_frame_id == self.entity_name), None)
         if entry is None:
             return
-        now = self.get_clock().now().to_msg()
+        now_time = self.get_clock().now()
+        now = now_time.to_msg()
         translation = entry.transform.translation
 
         pose = Pose()
@@ -139,6 +172,40 @@ class GroundTruthNode(Node):
             t.child_frame_id = self.child_frame_id
             t.transform = entry.transform
             self.tf_broadcaster.sendTransform(t)
+
+        # Planar yaw only -- same roll/pitch-negligible convention every
+        # other yaw in this repo already uses (see amiga_ros2_planners'
+        # own pose.py/bezier.py).
+        q = pose.orientation
+        yaw = 2.0 * math.atan2(q.z, q.w)
+
+        odom = Odometry()
+        odom.header.stamp = now
+        odom.header.frame_id = self.frame_id
+        odom.child_frame_id = self.child_frame_id
+        odom.pose.pose = pose
+        if self._prev_time is not None:
+            dt = (now_time - self._prev_time).nanoseconds * 1e-9
+            if dt > 0.0:
+                dx = pose.position.x - self._prev_x
+                dy = pose.position.y - self._prev_y
+                dyaw = math.atan2(
+                    math.sin(yaw - self._prev_yaw), math.cos(yaw - self._prev_yaw))
+                vx_world = dx / dt
+                vy_world = dy / dt
+                # World-frame velocity rotated into the body frame (REP-103:
+                # twist.twist is in child_frame_id, i.e. forward/lateral/yaw
+                # -rate, not world x/y).
+                odom.twist.twist.linear.x = (
+                    vx_world * math.cos(yaw) + vy_world * math.sin(yaw))
+                odom.twist.twist.linear.y = (
+                    -vx_world * math.sin(yaw) + vy_world * math.cos(yaw))
+                odom.twist.twist.angular.z = dyaw / dt
+        self.odom_pub.publish(odom)
+        self._prev_time = now_time
+        self._prev_x = pose.position.x
+        self._prev_y = pose.position.y
+        self._prev_yaw = yaw
 
 
 def main():

@@ -51,6 +51,17 @@ def build_shims(ns, imu_topic, imu_frame):
             output="screen",
             parameters=[use_sim_time],
             remappings=[
+                # Consumes velocity_smoother's own SMOOTHED output
+                # (nav2_bringup's own navigation_launch.py remaps
+                # velocity_smoother's "cmd_vel_smoothed" to "cmd_vel", with
+                # controller_server's own raw output on "cmd_vel_nav"
+                # feeding it). Was pointed straight at "/cmd_vel_nav" for a
+                # time, bypassing velocity_smoother entirely, to isolate a
+                # wobble that turned out to be caused by velocity_smoother
+                # running on Nav2's own stock, badly-mismatched default
+                # limits -- see nav2_params_sim.yaml's own velocity_smoother
+                # comment. Reverted back to the smoothed path now that it
+                # has sane limits.
                 ("/cmd_vel", qualify_ros(ns, "/cmd_vel")),
                 (
                     "/diff_drive_controller/cmd_vel_unstamped",
